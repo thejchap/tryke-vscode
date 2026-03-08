@@ -3,6 +3,7 @@ import * as cp from "child_process";
 import * as path from "path";
 import { TrykeEvent, TrykeTestItem } from "./types";
 import { TrykeConfig } from "./config";
+import { log } from "./log";
 
 export async function discoverTests(
   controller: vscode.TestController,
@@ -12,26 +13,28 @@ export async function discoverTests(
   const testMap = new Map<string, vscode.TestItem>();
 
   const tests = await collectTests(config, workspaceRoot);
+  log("discovery: collected", tests.length, "tests in", workspaceRoot);
   if (!tests.length) {
     return testMap;
   }
 
-  // Group tests by file
+  // Group tests by file (resolved to absolute paths)
   const byFile = new Map<string, TrykeTestItem[]>();
   for (const test of tests) {
-    const filePath = test.file_path ?? test.module_path;
-    let group = byFile.get(filePath);
+    const rawPath = test.file_path ?? test.module_path;
+    const absPath = path.resolve(workspaceRoot, rawPath);
+    let group = byFile.get(absPath);
     if (!group) {
       group = [];
-      byFile.set(filePath, group);
+      byFile.set(absPath, group);
     }
     group.push(test);
   }
 
   // Build test tree
-  for (const [filePath, fileTests] of byFile) {
-    const relPath = path.relative(workspaceRoot, filePath);
-    const fileUri = vscode.Uri.file(filePath);
+  for (const [absPath, fileTests] of byFile) {
+    const relPath = path.relative(workspaceRoot, absPath);
+    const fileUri = vscode.Uri.file(absPath);
     const fileItem = controller.createTestItem(relPath, relPath, fileUri);
     controller.items.add(fileItem);
     testMap.set(relPath, fileItem);
@@ -43,8 +46,8 @@ export async function discoverTests(
 
       if (test.line_number != null) {
         testItem.range = new vscode.Range(
-          new vscode.Position(test.line_number, 0),
-          new vscode.Position(test.line_number, 0),
+          new vscode.Position(test.line_number - 1, 0),
+          new vscode.Position(test.line_number - 1, 0),
         );
       }
 
@@ -53,6 +56,7 @@ export async function discoverTests(
     }
   }
 
+  log("discovery: testMap keys:", [...testMap.keys()]);
   return testMap;
 }
 

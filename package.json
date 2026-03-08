@@ -24,7 +24,11 @@
         },
         "tryke.mode": {
           "type": "string",
-          "enum": ["direct", "server", "auto"],
+          "enum": [
+            "direct",
+            "server",
+            "auto"
+          ],
           "default": "auto",
           "description": "Runner mode: 'direct' spawns a process per run, 'server' connects via TCP, 'auto' uses server if available."
         },
@@ -35,7 +39,7 @@
         },
         "tryke.server.port": {
           "type": "number",
-          "default": 9876,
+          "default": 2337,
           "description": "Tryke server port."
         },
         "tryke.server.autoStart": {
@@ -49,7 +53,10 @@
           "description": "Automatically stop the tryke server when the extension deactivates."
         },
         "tryke.workers": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "default": null,
           "description": "Number of worker threads for parallel test execution. Null uses tryke's default."
         },
@@ -60,7 +67,9 @@
         },
         "tryke.args": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Additional arguments to pass to tryke."
         }
@@ -76,13 +85,16 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.109.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.56.1",
+    "@types/vscode": "^1.109.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.39.3",
     "typescript": "^5.9.3",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "typescript-eslint": "^8.56.1"
+  },
+  "dependencies": {
+    "@vscode/vsce": "^3.7.1"
   }
 }

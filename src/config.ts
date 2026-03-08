@@ -21,7 +21,7 @@ export function getConfig(): TrykeConfig {
     mode: cfg.get<"direct" | "server" | "auto">("mode", "auto"),
     server: {
       host: cfg.get<string>("server.host", "127.0.0.1"),
-      port: cfg.get<number>("server.port", 9876),
+      port: cfg.get<number>("server.port", 2337),
       autoStart: cfg.get<boolean>("server.autoStart", true),
       autoStop: cfg.get<boolean>("server.autoStop", true),
     },

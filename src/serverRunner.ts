@@ -5,7 +5,7 @@ import { TrykeClient } from "./client";
 import { TrykeTestResult, RunParams } from "./types";
 import { reportResult } from "./resultMapper";
 import { ensureServer } from "./serverManager";
-import { testIdFromResult } from "./directRunner";
+
 
 export async function runServer(
   request: vscode.TestRunRequest,
@@ -40,8 +40,8 @@ async function runWithClient(
     // Register notification handlers before sending request
     client.onNotification("test_complete", (params) => {
       const { result } = params as { result: TrykeTestResult };
-      const testId = resolveTestId(result.test, testMap, workspaceRoot);
-      const testItem = testId ? testMap.get(testId) : undefined;
+      const testId = resolveTestId(result.test, workspaceRoot);
+      const testItem = testMap.get(testId);
       if (testItem) {
         reportResult(testRun, testItem, result);
       }
@@ -76,10 +76,8 @@ function buildRunParams(
 
   for (const item of request.include) {
     if (item.children.size > 0) {
-      // File-level item
-      if (item.uri) {
-        paths.push(item.uri.fsPath);
-      }
+      // file-level item — id is already a relative path
+      paths.push(item.id);
     } else {
       // Individual test — send as tryke test ID
       tests.push(item.id);
@@ -98,22 +96,10 @@ function buildRunParams(
 
 function resolveTestId(
   test: { name: string; file_path?: string; module_path: string },
-  testMap: Map<string, vscode.TestItem>,
   workspaceRoot: string,
-): string | undefined {
-  // Try relative path format first (matches discovery IDs)
+): string {
   const filePath = test.file_path ?? test.module_path;
-  const relPath = path.relative(workspaceRoot, filePath);
-  const relId = `${relPath}::${test.name}`;
-  if (testMap.has(relId)) {
-    return relId;
-  }
-
-  // Try absolute path format (from directRunner's testIdFromResult)
-  const absId = testIdFromResult(test);
-  if (testMap.has(absId)) {
-    return absId;
-  }
-
-  return undefined;
+  const absPath = path.resolve(workspaceRoot, filePath);
+  const relPath = path.relative(workspaceRoot, absPath);
+  return `${relPath}::${test.name}`;
 }

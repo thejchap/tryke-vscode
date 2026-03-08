@@ -4,6 +4,7 @@ import * as path from "path";
 import { TrykeEvent } from "./types";
 import { TrykeConfig } from "./config";
 import { reportResult } from "./resultMapper";
+import { log } from "./log";
 
 export async function runDirect(
   request: vscode.TestRunRequest,
@@ -14,6 +15,7 @@ export async function runDirect(
   token: vscode.CancellationToken,
 ): Promise<void> {
   const args = buildArgs(request, config, workspaceRoot);
+  log("spawn:", config.command, args);
 
   return new Promise<void>((resolve, reject) => {
     const proc = cp.spawn(config.command, args, { cwd: workspaceRoot });
@@ -36,27 +38,32 @@ export async function runDirect(
         }
         try {
           const event = JSON.parse(trimmed) as TrykeEvent;
-          handleEvent(event, testRun, testMap);
+          log("event:", event.event, "event" in event ? JSON.stringify(event).slice(0, 300) : "");
+          handleEvent(event, testRun, testMap, workspaceRoot);
         } catch {
-          // Skip non-JSON lines
+          log("non-json stdout line:", trimmed.slice(0, 200));
         }
       }
     });
 
     proc.stderr.on("data", (data: Buffer) => {
-      testRun.appendOutput(data.toString().replace(/\n/g, "\r\n"));
+      const text = data.toString();
+      log("stderr:", text.slice(0, 500));
+      testRun.appendOutput(text.replace(/\n/g, "\r\n"));
     });
 
     proc.on("error", (err) => {
+      log("spawn error:", err.message);
       reject(new Error(`Failed to spawn ${config.command}: ${err.message}`));
     });
 
-    proc.on("close", () => {
+    proc.on("close", (code) => {
+      log("process closed with code", code);
       // Process any remaining buffer
       if (buffer.trim()) {
         try {
           const event = JSON.parse(buffer.trim()) as TrykeEvent;
-          handleEvent(event, testRun, testMap);
+          handleEvent(event, testRun, testMap, workspaceRoot);
         } catch {
           // ignore
         }
@@ -70,23 +77,29 @@ function handleEvent(
   event: TrykeEvent,
   testRun: vscode.TestRun,
   testMap: Map<string, vscode.TestItem>,
+  workspaceRoot: string,
 ): void {
   if (event.event === "test_complete") {
     const result = event.result;
-    const testId = testIdFromResult(result.test);
+    const testId = testIdFromResult(result.test, workspaceRoot);
     const testItem = testMap.get(testId);
+    log("test_complete:", testId, "found:", !!testItem, "outcome:", result.outcome.status);
+    if (!testItem) {
+      log("testMap keys:", [...testMap.keys()]);
+    }
     if (testItem) {
       reportResult(testRun, testItem, result);
     }
   }
 }
 
-function testIdFromResult(test: { name: string; file_path?: string; module_path: string }): string {
-  // Test IDs match the format used in discovery: relative_path::test_name
-  // Since we may not have workspaceRoot here, we use file_path or module_path as-is
-  // The controller will try both formats
+function testIdFromResult(
+  test: { name: string; file_path?: string; module_path: string },
+  workspaceRoot: string,
+): string {
   const filePath = test.file_path ?? test.module_path;
-  return `${filePath}::${test.name}`;
+  const relPath = path.relative(workspaceRoot, path.resolve(workspaceRoot, filePath));
+  return `${relPath}::${test.name}`;
 }
 
 function buildArgs(
@@ -109,18 +122,16 @@ function buildArgs(
     const names: string[] = [];
 
     for (const item of request.include) {
+      log("buildArgs item:", item.id, "children:", item.children.size);
       if (item.children.size > 0) {
-        // File-level item: run entire file
-        if (item.uri) {
-          paths.add(item.uri.fsPath);
-        }
+        // file-level item — id is already a relative path
+        paths.add(item.id);
       } else {
-        // Individual test: extract file path and name
+        // individual test — id is "relPath::testName"
         const parts = item.id.split("::");
         if (parts.length >= 2) {
-          const filePath = path.resolve(workspaceRoot, parts[0]);
-          paths.add(filePath);
-          names.push(parts[parts.length - 1]);
+          paths.add(parts[0]);
+          names.push(parts.slice(1).join("::"));
         }
       }
     }
@@ -138,5 +149,3 @@ function buildArgs(
 
   return args;
 }
-
-export { testIdFromResult };
