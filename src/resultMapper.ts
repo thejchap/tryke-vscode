@@ -72,8 +72,8 @@ function buildFailureMessages(
     for (const assertion of detail.assertions) {
       const msg = vscode.TestMessage.diff(
         assertion.expression,
-        assertion.received,
         assertion.expected,
+        assertion.received,
       );
       if (assertion.file) {
         msg.location = new vscode.Location(
