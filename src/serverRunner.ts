@@ -27,6 +27,46 @@ export async function runServer(
   }
 }
 
+/** Run tests using an existing persistent client (for watch mode). */
+export async function runServerWithClient(
+  client: TrykeClient,
+  request: vscode.TestRunRequest,
+  testRun: vscode.TestRun,
+  testMap: Map<string, vscode.TestItem>,
+  _config: TrykeConfig,
+  workspaceRoot: string,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  client.clearNotificationHandlers();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      client.onNotification("test_complete", (params) => {
+        const { result } = params as { result: TrykeTestResult };
+        const testId = resolveTestId(result.test, workspaceRoot);
+        const testItem = testMap.get(testId);
+        if (testItem) {
+          reportResult(testRun, testItem, result);
+        }
+      });
+
+      client.onNotification("run_complete", () => {
+        resolve();
+      });
+
+      // On cancellation, resolve without disconnecting the persistent client
+      const cancelSub = token.onCancellationRequested(() => {
+        cancelSub.dispose();
+        resolve();
+      });
+
+      const params = buildRunParams(request, workspaceRoot);
+      client.request("run", params).catch(reject);
+    });
+  } finally {
+    client.clearNotificationHandlers();
+  }
+}
+
 async function runWithClient(
   client: TrykeClient,
   request: vscode.TestRunRequest,

@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { getConfig } from "./config";
 import { discoverTests } from "./discovery";
 import { resolveRunner } from "./runner";
+import { WatchSession } from "./watchSession";
 
 export class TrykeTestController implements vscode.Disposable {
   private controller: vscode.TestController;
@@ -22,6 +23,8 @@ export class TrykeTestController implements vscode.Disposable {
       vscode.TestRunProfileKind.Run,
       (request, token) => this.runTests(request, token),
       true,
+      undefined,
+      true, // supportsContinuousRun
     );
     this.disposables.push(runProfile);
 
@@ -72,6 +75,21 @@ export class TrykeTestController implements vscode.Disposable {
     }
 
     const config = getConfig();
+
+    if (request.continuous) {
+      const session = new WatchSession(
+        this.controller,
+        request,
+        () => this.testMap,
+        config,
+        workspaceRoot,
+        token,
+      );
+      this.disposables.push(session);
+      await session.start();
+      return;
+    }
+
     const testRun = this.controller.createTestRun(request);
 
     // Mark included tests as enqueued
