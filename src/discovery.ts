@@ -39,8 +39,24 @@ export async function discoverTests(
     controller.items.add(fileItem);
     testMap.set(relPath, fileItem);
 
+    // Sort tests so that tests in the same group are adjacent
+    fileTests.sort((a, b) => {
+      const ag = (a.groups ?? []).join("::");
+      const bg = (b.groups ?? []).join("::");
+      return ag < bg ? -1 : ag > bg ? 1 : 0;
+    });
+
     for (const test of fileTests) {
-      const testId = `${relPath}::${test.name}`;
+      const parent = getOrCreateGroup(
+        controller,
+        fileItem,
+        relPath,
+        test.groups ?? [],
+        testMap,
+      );
+
+      const groups = test.groups ?? [];
+      const testId = [relPath, ...groups, test.name].join("::");
       const label = test.display_name ?? test.name;
       const testItem = controller.createTestItem(testId, label, fileUri);
 
@@ -51,13 +67,39 @@ export async function discoverTests(
         );
       }
 
-      fileItem.children.add(testItem);
+      parent.children.add(testItem);
       testMap.set(testId, testItem);
     }
   }
 
   log("discovery: testMap keys:", [...testMap.keys()]);
   return testMap;
+}
+
+function getOrCreateGroup(
+  controller: vscode.TestController,
+  fileItem: vscode.TestItem,
+  relPath: string,
+  groups: string[],
+  testMap: Map<string, vscode.TestItem>,
+): vscode.TestItem {
+  let parent = fileItem;
+  let idPrefix = relPath;
+
+  for (const groupName of groups) {
+    idPrefix = `${idPrefix}::${groupName}`;
+    const existing = testMap.get(idPrefix);
+    if (existing) {
+      parent = existing;
+    } else {
+      const groupItem = controller.createTestItem(idPrefix, groupName);
+      parent.children.add(groupItem);
+      testMap.set(idPrefix, groupItem);
+      parent = groupItem;
+    }
+  }
+
+  return parent;
 }
 
 function collectTests(

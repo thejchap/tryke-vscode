@@ -94,12 +94,12 @@ function handleEvent(
 }
 
 function testIdFromResult(
-  test: { name: string; file_path?: string; module_path: string },
+  test: { name: string; file_path?: string; module_path: string; groups?: string[] },
   workspaceRoot: string,
 ): string {
   const filePath = test.file_path ?? test.module_path;
   const relPath = path.relative(workspaceRoot, path.resolve(workspaceRoot, filePath));
-  return `${relPath}::${test.name}`;
+  return [relPath, ...(test.groups ?? []), test.name].join("::");
 }
 
 function buildArgs(
@@ -123,15 +123,20 @@ function buildArgs(
 
     for (const item of request.include) {
       log("buildArgs item:", item.id, "children:", item.children.size);
-      if (item.children.size > 0) {
-        // file-level item — id is already a relative path
+      if (item.children.size > 0 && !item.id.includes("::")) {
+        // File-level item — id is already a relative path
         paths.add(item.id);
+      } else if (item.children.size > 0) {
+        // Group/namespace item: collect leaf test names
+        const filePart = item.id.split("::")[0];
+        paths.add(filePart);
+        collectLeafNames(item, names);
       } else {
-        // individual test — id is "relPath::testName"
+        // Individual test — id is "relPath::group1::...::testName"
         const parts = item.id.split("::");
         if (parts.length >= 2) {
           paths.add(parts[0]);
-          names.push(parts.slice(1).join("::"));
+          names.push(parts[parts.length - 1]);
         }
       }
     }
@@ -149,3 +154,14 @@ function buildArgs(
 
   return args;
 }
+
+function collectLeafNames(item: vscode.TestItem, names: string[]): void {
+  if (item.children.size === 0) {
+    const parts = item.id.split("::");
+    names.push(parts[parts.length - 1]);
+  } else {
+    item.children.forEach((child) => collectLeafNames(child, names));
+  }
+}
+
+export { testIdFromResult };

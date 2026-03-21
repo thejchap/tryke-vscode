@@ -75,12 +75,16 @@ function buildRunParams(
   const paths: string[] = [];
 
   for (const item of request.include) {
-    if (item.children.size > 0) {
-      // file-level item — id is already a relative path
+    if (item.children.size > 0 && !item.id.includes("::")) {
+      // File-level item — id is already a relative path
       paths.push(item.id);
+    } else if (item.children.size > 0) {
+      // Group/namespace item: collect leaf test IDs
+      collectLeafServerIds(item, tests);
     } else {
-      // Individual test — send as tryke test ID
-      tests.push(item.id);
+      // Individual test — send as tryke test ID (file::name, no groups)
+      const parts = item.id.split("::");
+      tests.push(`${parts[0]}::${parts[parts.length - 1]}`);
     }
   }
 
@@ -94,12 +98,22 @@ function buildRunParams(
   return params;
 }
 
+function collectLeafServerIds(item: vscode.TestItem, ids: string[]): void {
+  if (item.children.size === 0) {
+    // Strip groups: send file::name (tryke's expected ID format)
+    const parts = item.id.split("::");
+    ids.push(`${parts[0]}::${parts[parts.length - 1]}`);
+  } else {
+    item.children.forEach((child) => collectLeafServerIds(child, ids));
+  }
+}
+
 function resolveTestId(
-  test: { name: string; file_path?: string; module_path: string },
+  test: { name: string; file_path?: string; module_path: string; groups?: string[] },
   workspaceRoot: string,
 ): string {
   const filePath = test.file_path ?? test.module_path;
   const absPath = path.resolve(workspaceRoot, filePath);
   const relPath = path.relative(workspaceRoot, absPath);
-  return `${relPath}::${test.name}`;
+  return [relPath, ...(test.groups ?? []), test.name].join("::");
 }

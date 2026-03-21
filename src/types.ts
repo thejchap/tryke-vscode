@@ -26,6 +26,7 @@ export interface TrykeTestItem {
   line_number?: number;
   display_name?: string;
   expected_assertions?: TrykeExpectedAssertion[];
+  groups?: string[];
   skip?: string | boolean;
   todo?: string | boolean;
   xfail?: string | boolean;
