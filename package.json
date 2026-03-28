@@ -65,6 +65,54 @@
           "default": false,
           "description": "Stop test execution after the first failure."
         },
+        "tryke.maxfail": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "description": "Stop after N test failures. Null uses tryke's default (no limit)."
+        },
+        "tryke.dist": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "test",
+            "file",
+            "group",
+            null
+          ],
+          "default": null,
+          "description": "How tests are distributed across workers. Null uses tryke's default (test)."
+        },
+        "tryke.markers": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Tag/marker filter expression (e.g. \"slow and not network\")."
+        },
+        "tryke.changed": {
+          "type": "string",
+          "enum": [
+            "off",
+            "only",
+            "first"
+          ],
+          "default": "off",
+          "description": "Run only tests affected by git changes ('only'), run changed tests first then all ('first'), or disabled ('off')."
+        },
+        "tryke.baseBranch": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Base branch for changed-test detection (e.g. \"main\"). Uses merge-base diff."
+        },
         "tryke.args": {
           "type": "array",
           "items": {

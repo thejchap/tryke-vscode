@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as cp from "child_process";
 import * as path from "path";
-import { TrykeEvent, TrykeTestItem } from "./types";
+import { TrykeEvent, TrykeTestItem, TrykeDiscoveryWarning } from "./types";
 import { TrykeConfig } from "./config";
 import { log } from "./log";
 
@@ -12,8 +12,11 @@ export async function discoverTests(
 ): Promise<Map<string, vscode.TestItem>> {
   const testMap = new Map<string, vscode.TestItem>();
 
-  const tests = await collectTests(config, workspaceRoot);
+  const { tests, warnings } = await collectTests(config, workspaceRoot);
   log("discovery: collected", tests.length, "tests in", workspaceRoot);
+  for (const warning of warnings) {
+    log("discovery warning:", warning.file_path, warning.kind, warning.message);
+  }
   if (!tests.length) {
     return testMap;
   }
@@ -102,10 +105,15 @@ function getOrCreateGroup(
   return parent;
 }
 
+interface CollectResult {
+  tests: TrykeTestItem[];
+  warnings: TrykeDiscoveryWarning[];
+}
+
 function collectTests(
   config: TrykeConfig,
   cwd: string,
-): Promise<TrykeTestItem[]> {
+): Promise<CollectResult> {
   return new Promise((resolve, reject) => {
     const args = ["test", "--collect-only", "--reporter", "json", ...config.args];
     const proc = cp.spawn(config.command, args, { cwd });
@@ -136,6 +144,7 @@ function collectTests(
       }
 
       const tests: TrykeTestItem[] = [];
+      const warnings: TrykeDiscoveryWarning[] = [];
       for (const line of stdout.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) {
@@ -145,12 +154,14 @@ function collectTests(
           const event = JSON.parse(trimmed) as TrykeEvent;
           if (event.event === "collect_complete") {
             tests.push(...event.tests);
+          } else if (event.event === "discovery_warning") {
+            warnings.push(event.warning);
           }
         } catch {
           // Skip non-JSON lines
         }
       }
-      resolve(tests);
+      resolve({ tests, warnings });
     });
   });
 }

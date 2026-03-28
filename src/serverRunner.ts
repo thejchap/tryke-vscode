@@ -33,13 +33,26 @@ export async function runServerWithClient(
   request: vscode.TestRunRequest,
   testRun: vscode.TestRun,
   testMap: Map<string, vscode.TestItem>,
-  _config: TrykeConfig,
+  config: TrykeConfig,
   workspaceRoot: string,
   token: vscode.CancellationToken,
 ): Promise<void> {
   client.clearNotificationHandlers();
   try {
     await new Promise<void>((resolve, reject) => {
+      client.onNotification("run_start", (params) => {
+        const { tests } = params as { tests: { name: string; file_path?: string; module_path: string; groups?: string[] }[] };
+        if (tests) {
+          for (const test of tests) {
+            const testId = resolveTestId(test, workspaceRoot);
+            const testItem = testMap.get(testId);
+            if (testItem) {
+              testRun.started(testItem);
+            }
+          }
+        }
+      });
+
       client.onNotification("test_complete", (params) => {
         const { result } = params as { result: TrykeTestResult };
         const testId = resolveTestId(result.test, workspaceRoot);
@@ -59,7 +72,7 @@ export async function runServerWithClient(
         resolve();
       });
 
-      const params = buildRunParams(request, workspaceRoot);
+      const params = buildRunParams(request, workspaceRoot, config);
       client.request("run", params).catch(reject);
     });
   } finally {
@@ -78,6 +91,19 @@ async function runWithClient(
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     // Register notification handlers before sending request
+    client.onNotification("run_start", (params) => {
+      const { tests } = params as { tests: { name: string; file_path?: string; module_path: string; groups?: string[] }[] };
+      if (tests) {
+        for (const test of tests) {
+          const testId = resolveTestId(test, workspaceRoot);
+          const testItem = testMap.get(testId);
+          if (testItem) {
+            testRun.started(testItem);
+          }
+        }
+      }
+    });
+
     client.onNotification("test_complete", (params) => {
       const { result } = params as { result: TrykeTestResult };
       const testId = resolveTestId(result.test, workspaceRoot);
@@ -96,8 +122,7 @@ async function runWithClient(
       resolve();
     });
 
-    // Build run params
-    const params = buildRunParams(request, workspaceRoot);
+    const params = buildRunParams(request, workspaceRoot, config);
 
     client.request("run", params).catch(reject);
   });
@@ -106,9 +131,16 @@ async function runWithClient(
 function buildRunParams(
   request: vscode.TestRunRequest,
   workspaceRoot: string,
+  config: TrykeConfig,
 ): RunParams {
+  const params: RunParams = {};
+
+  if (config.markers != null) {
+    params.markers = config.markers;
+  }
+
   if (!request.include?.length) {
-    return {};
+    return params;
   }
 
   const tests: string[] = [];
@@ -128,7 +160,6 @@ function buildRunParams(
     }
   }
 
-  const params: RunParams = {};
   if (tests.length > 0) {
     params.tests = tests;
   }
