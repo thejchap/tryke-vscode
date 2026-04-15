@@ -33,6 +33,12 @@ export interface TrykeTestItem {
   xfail?: string | boolean;
   tags?: string[];
   doctest_object?: string;
+  // Set by the discovery layer when this entry was generated from a
+  // `@test.cases` decorator. The Rust side serializes it via
+  // `#[serde(skip_serializing_if = "Option::is_none")]`, so it only appears
+  // in JSON for parametrized cases.
+  case_label?: string;
+  case_index?: number;
 }
 
 // Tagged union: { status: "passed"|"failed"|..., detail?: ... }

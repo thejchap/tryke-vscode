@@ -1,10 +1,10 @@
 import * as vscode from "vscode";
-import * as path from "path";
 import { TrykeConfig } from "./config";
 import { TrykeClient } from "./client";
 import { TrykeTestResult, RunParams } from "./types";
 import { reportResult } from "./resultMapper";
 import { ensureServer } from "./serverManager";
+import { buildTestId } from "./testId";
 
 
 export async function runServer(
@@ -180,11 +180,14 @@ function collectLeafServerIds(item: vscode.TestItem, ids: string[]): void {
 }
 
 function resolveTestId(
-  test: { name: string; file_path?: string; module_path: string; groups?: string[] },
+  test: {
+    name: string;
+    file_path?: string;
+    module_path: string;
+    groups?: string[];
+    case_label?: string;
+  },
   workspaceRoot: string,
 ): string {
-  const filePath = test.file_path ?? test.module_path;
-  const absPath = path.resolve(workspaceRoot, filePath);
-  const relPath = path.relative(workspaceRoot, absPath);
-  return [relPath, ...(test.groups ?? []), test.name].join("::");
+  return buildTestId(test, workspaceRoot);
 }
