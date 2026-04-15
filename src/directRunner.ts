@@ -1,10 +1,10 @@
 import * as vscode from "vscode";
 import * as cp from "child_process";
-import * as path from "path";
 import { TrykeEvent } from "./types";
 import { TrykeConfig } from "./config";
 import { reportResult } from "./resultMapper";
 import { log } from "./log";
+import { buildTestId } from "./testId";
 
 export async function runDirect(
   request: vscode.TestRunRequest,
@@ -94,12 +94,16 @@ function handleEvent(
 }
 
 function testIdFromResult(
-  test: { name: string; file_path?: string; module_path: string; groups?: string[] },
+  test: {
+    name: string;
+    file_path?: string;
+    module_path: string;
+    groups?: string[];
+    case_label?: string;
+  },
   workspaceRoot: string,
 ): string {
-  const filePath = test.file_path ?? test.module_path;
-  const relPath = path.relative(workspaceRoot, path.resolve(workspaceRoot, filePath));
-  return [relPath, ...(test.groups ?? []), test.name].join("::");
+  return buildTestId(test, workspaceRoot);
 }
 
 function buildArgs(

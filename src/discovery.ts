@@ -4,6 +4,7 @@ import * as path from "path";
 import { TrykeEvent, TrykeTestItem } from "./types";
 import { TrykeConfig } from "./config";
 import { log } from "./log";
+import { buildTestId } from "./testId";
 
 export async function discoverTests(
   controller: vscode.TestController,
@@ -55,9 +56,9 @@ export async function discoverTests(
         testMap,
       );
 
-      const groups = test.groups ?? [];
-      const testId = [relPath, ...groups, test.name].join("::");
-      const label = test.display_name ?? test.name;
+      const testId = buildTestId(test, workspaceRoot);
+      const leafName = test.case_label ? `${test.name}[${test.case_label}]` : test.name;
+      const label = test.display_name ?? leafName;
       const testItem = controller.createTestItem(testId, label, fileUri);
 
       if (test.line_number != null) {
