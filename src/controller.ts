@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { getConfig } from "./config";
 import { discoverTests } from "./discovery";
 import { resolveRunner } from "./runner";
+import { runDirect } from "./directRunner";
 import { WatchSession } from "./watchSession";
 
 export class TrykeTestController implements vscode.Disposable {
@@ -27,6 +28,14 @@ export class TrykeTestController implements vscode.Disposable {
       true, // supportsContinuousRun
     );
     this.disposables.push(runProfile);
+
+    const changedProfile = this.controller.createRunProfile(
+      "Run Changed Tests",
+      vscode.TestRunProfileKind.Run,
+      (request, token) => this.runChangedTests(request, token),
+      false,
+    );
+    this.disposables.push(changedProfile);
 
     this.watcher = vscode.workspace.createFileSystemWatcher("**/*.py");
     const debouncedDiscover = () => {
@@ -105,6 +114,36 @@ export class TrykeTestController implements vscode.Disposable {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       vscode.window.showErrorMessage(`Tryke run failed: ${msg}`);
+    } finally {
+      testRun.end();
+    }
+  }
+
+  private async runChangedTests(
+    request: vscode.TestRunRequest,
+    token: vscode.CancellationToken,
+  ): Promise<void> {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) {
+      return;
+    }
+
+    const config = getConfig();
+    const changedConfig = { ...config, changed: "only" as const };
+
+    const testRun = this.controller.createTestRun(request);
+
+    const items = request.include ?? this.getAllTestItems();
+    for (const item of items) {
+      testRun.enqueued(item);
+      item.children.forEach((child) => testRun.enqueued(child));
+    }
+
+    try {
+      await runDirect(request, testRun, this.testMap, changedConfig, workspaceRoot, token);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      vscode.window.showErrorMessage(`Tryke changed run failed: ${msg}`);
     } finally {
       testRun.end();
     }

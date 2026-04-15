@@ -11,6 +11,11 @@ export interface TrykeConfig {
   };
   workers: number | null;
   failFast: boolean;
+  maxfail: number | null;
+  dist: "test" | "file" | "group" | null;
+  markers: string | null;
+  changed: "off" | "only" | "first";
+  baseBranch: string | null;
   args: string[];
 }
 
@@ -27,6 +32,11 @@ export function getConfig(): TrykeConfig {
     },
     workers: cfg.get<number | null>("workers", null),
     failFast: cfg.get<boolean>("failFast", false),
+    maxfail: cfg.get<number | null>("maxfail", null),
+    dist: cfg.get<"test" | "file" | "group" | null>("dist", null),
+    markers: cfg.get<string | null>("markers", null),
+    changed: cfg.get<"off" | "only" | "first">("changed", "off"),
+    baseBranch: cfg.get<string | null>("baseBranch", null),
     args: cfg.get<string[]>("args", []),
   };
 }

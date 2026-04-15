@@ -17,6 +17,7 @@ export interface TrykeAssertion {
   span_length: number;
   expected: string;
   received: string;
+  expected_arg_span?: [number, number];
 }
 
 export interface TrykeTestItem {
@@ -31,10 +32,11 @@ export interface TrykeTestItem {
   todo?: string | boolean;
   xfail?: string | boolean;
   tags?: string[];
+  doctest_object?: string;
   // Set by the discovery layer when this entry was generated from a
   // `@test.cases` decorator. The Rust side serializes it via
-  // `#[serde(skip_serializing_if = "Option::is_none")]`, so it only appears in
-  // JSON for parametrized cases.
+  // `#[serde(skip_serializing_if = "Option::is_none")]`, so it only appears
+  // in JSON for parametrized cases.
   case_label?: string;
   case_index?: number;
 }
@@ -45,9 +47,9 @@ export type TrykeTestOutcome =
   | { status: "failed"; detail: { message: string; traceback?: string; assertions?: TrykeAssertion[] } }
   | { status: "skipped"; detail?: { reason?: string } }
   | { status: "error"; detail: { message: string; traceback?: string } }
-  | { status: "x_failed"; detail?: { message?: string } }
-  | { status: "x_passed"; detail?: { message?: string } }
-  | { status: "todo"; detail?: { reason?: string } };
+  | { status: "x_failed"; detail?: { reason?: string } }
+  | { status: "x_passed" }
+  | { status: "todo"; detail?: { description?: string } };
 
 export interface TrykeDuration {
   secs: number;
@@ -62,6 +64,11 @@ export interface TrykeTestResult {
   stderr?: string;
 }
 
+export interface TrykeChangedSelectionSummary {
+  changed_files: number;
+  affected_tests: number;
+}
+
 export interface TrykeRunSummary {
   passed: number;
   failed: number;
@@ -70,6 +77,11 @@ export interface TrykeRunSummary {
   xfailed: number;
   todo: number;
   duration: TrykeDuration;
+  discovery_duration?: TrykeDuration;
+  test_duration?: TrykeDuration;
+  file_count: number;
+  start_time?: string;
+  changed_selection?: TrykeChangedSelectionSummary;
 }
 
 export interface TrykeFileDiscovery {
@@ -89,12 +101,21 @@ export interface TrykeDiscoveryError {
   line_number?: number;
 }
 
+export type TrykeDiscoveryWarningKind = "dynamic_imports";
+
+export interface TrykeDiscoveryWarning {
+  file_path: string;
+  kind: TrykeDiscoveryWarningKind;
+  message: string;
+}
+
 // NDJSON events from tryke reporter
 export type TrykeEvent =
   | { event: "collect_complete"; tests: TrykeTestItem[] }
   | { event: "run_start"; tests: TrykeTestItem[] }
   | { event: "test_complete"; result: TrykeTestResult }
-  | { event: "run_complete"; summary: TrykeRunSummary };
+  | { event: "run_complete"; summary: TrykeRunSummary }
+  | { event: "discovery_warning"; warning: TrykeDiscoveryWarning };
 
 // JSON-RPC 2.0 protocol types (tryke_server/src/protocol.rs)
 export interface JsonRpcRequest {

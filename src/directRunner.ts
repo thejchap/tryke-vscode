@@ -79,7 +79,15 @@ function handleEvent(
   testMap: Map<string, vscode.TestItem>,
   workspaceRoot: string,
 ): void {
-  if (event.event === "test_complete") {
+  if (event.event === "run_start") {
+    for (const test of event.tests) {
+      const testId = testIdFromResult(test, workspaceRoot);
+      const testItem = testMap.get(testId);
+      if (testItem) {
+        testRun.started(testItem);
+      }
+    }
+  } else if (event.event === "test_complete") {
     const result = event.result;
     const testId = testIdFromResult(result.test, workspaceRoot);
     const testItem = testMap.get(testId);
@@ -90,6 +98,8 @@ function handleEvent(
     if (testItem) {
       reportResult(testRun, testItem, result);
     }
+  } else if (event.event === "discovery_warning") {
+    log("discovery warning:", event.warning.file_path, event.warning.kind, event.warning.message);
   }
 }
 
@@ -119,6 +129,28 @@ function buildArgs(
 
   if (config.failFast) {
     args.push("--fail-fast");
+  }
+
+  if (config.maxfail != null) {
+    args.push("--maxfail", String(config.maxfail));
+  }
+
+  if (config.dist != null) {
+    args.push("--dist", config.dist);
+  }
+
+  if (config.markers != null) {
+    args.push("-m", config.markers);
+  }
+
+  if (config.changed === "only") {
+    args.push("--changed");
+  } else if (config.changed === "first") {
+    args.push("--changed-first");
+  }
+
+  if (config.baseBranch != null) {
+    args.push("--base-branch", config.baseBranch);
   }
 
   if (request.include?.length) {
