@@ -1,5 +1,6 @@
 import * as net from "net";
 import { JsonRpcRequest, JsonRpcResponse, JsonRpcNotification } from "./types";
+import { log } from "./log";
 
 type NotificationHandler = (params: unknown) => void;
 
@@ -11,15 +12,20 @@ export class TrykeClient {
   private buffer = "";
 
   async connect(host: string, port: number): Promise<void> {
+    const endpoint = `${host}:${port}`;
     return new Promise((resolve, reject) => {
       const socket = net.createConnection({ host, port }, () => {
         this.socket = socket;
+        log("client: connected to", endpoint);
         resolve();
       });
 
       socket.on("error", (err) => {
         if (!this.socket) {
+          log("client: connect error to", endpoint, "—", err.message);
           reject(err);
+        } else {
+          log("client: socket error on", endpoint, "—", err.message);
         }
       });
 
@@ -42,6 +48,9 @@ export class TrykeClient {
       });
 
       socket.on("close", () => {
+        if (this.socket) {
+          log("client: connection to", endpoint, "closed with", this.pending.size, "pending request(s)");
+        }
         // Reject all pending requests
         for (const [, pending] of this.pending) {
           pending.reject(new Error("Connection closed"));

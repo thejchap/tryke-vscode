@@ -1,58 +1,67 @@
 import * as cp from "child_process";
 import { TrykeClient } from "./client";
 import { TrykeConfig } from "./config";
+import { log } from "./log";
 
 let serverProcess: cp.ChildProcess | undefined;
 
 export async function ensureServer(config: TrykeConfig): Promise<void> {
-  // Try to connect and ping
+  const endpoint = `${config.server.host}:${config.server.port}`;
+  log("server: ensureServer at", endpoint);
+
   if (await tryPing(config.server.host, config.server.port)) {
+    log("server: reusing existing server at", endpoint);
     return;
   }
 
   if (!config.server.autoStart) {
+    log("server: no existing server at", endpoint, "and autoStart is disabled");
     throw new Error(
-      `Cannot connect to tryke server at ${config.server.host}:${config.server.port} and autoStart is disabled`,
+      `Cannot connect to tryke server at ${endpoint} and autoStart is disabled`,
     );
   }
 
-  // Spawn server
-  serverProcess = cp.spawn(
-    config.command,
-    ["server", "--port", String(config.server.port)],
-    {
-      stdio: "ignore",
-      detached: true,
-    },
-  );
+  const spawnArgs = ["server", "--port", String(config.server.port)];
+  log("server: spawning", config.command, spawnArgs.join(" "));
+
+  serverProcess = cp.spawn(config.command, spawnArgs, {
+    stdio: "ignore",
+    detached: true,
+  });
 
   serverProcess.unref();
 
-  serverProcess.on("error", () => {
+  log("server: spawned pid", serverProcess.pid);
+
+  serverProcess.on("error", (err) => {
+    log("server: spawn error:", err.message);
     serverProcess = undefined;
   });
 
-  serverProcess.on("exit", () => {
+  serverProcess.on("exit", (code, signal) => {
+    log("server: exited code =", code, "signal =", signal);
     serverProcess = undefined;
   });
 
-  // Poll for server readiness
   const timeout = 10_000;
   const interval = 200;
   const start = Date.now();
 
   while (Date.now() - start < timeout) {
     if (await tryPing(config.server.host, config.server.port)) {
+      log("server: ready after", Date.now() - start, "ms");
       return;
     }
     await sleep(interval);
   }
 
+  log("server: timed out waiting for readiness after", timeout, "ms");
   throw new Error("Timed out waiting for tryke server to start");
 }
 
 export function stopServer(): void {
   if (serverProcess) {
+    log("server: stopping pid", serverProcess.pid);
     serverProcess.kill("SIGTERM");
     serverProcess = undefined;
   }
@@ -65,8 +74,10 @@ async function tryPing(host: string, port: number): Promise<boolean> {
     await client.request("ping");
     client.disconnect();
     return true;
-  } catch {
+  } catch (err) {
     client.disconnect();
+    const msg = err instanceof Error ? err.message : String(err);
+    log("server: ping failed for", `${host}:${port}`, "—", msg);
     return false;
   }
 }
