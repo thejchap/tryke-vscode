@@ -67,6 +67,48 @@ export function stopServer(): void {
   }
 }
 
+/**
+ * Kill whatever (if anything) is listening on the tryke server port.
+ *
+ * First tries the `serverProcess` we spawned ourselves; then falls back to
+ * looking the PID up with `lsof` (macOS/Linux) or `netstat`/`taskkill`
+ * (Windows) so foreign / stale servers — e.g. leftovers from a previous
+ * session with a different tryke binary — can be cleared without manual
+ * shell gymnastics. Waits until the port is free (or the timeout expires).
+ */
+export async function killServerOnPort(
+  host: string,
+  port: number,
+): Promise<void> {
+  if (serverProcess) {
+    const pid = serverProcess.pid;
+    log("server: killing tracked pid", pid);
+    serverProcess.kill("SIGTERM");
+    serverProcess = undefined;
+  }
+
+  const foreignPid = findPidOnPort(port);
+  if (foreignPid !== null) {
+    log("server: killing foreign pid", foreignPid, "on port", port);
+    try {
+      process.kill(foreignPid, "SIGTERM");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log("server: failed to SIGTERM pid", foreignPid, "—", msg);
+    }
+  }
+
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (!(await tryPing(host, port))) {
+      log("server: port", port, "is free");
+      return;
+    }
+    await sleep(150);
+  }
+  log("server: port", port, "still held after 5s — something else has it");
+}
+
 async function tryPing(host: string, port: number): Promise<boolean> {
   const client = new TrykeClient();
   try {
@@ -79,6 +121,50 @@ async function tryPing(host: string, port: number): Promise<boolean> {
     const msg = err instanceof Error ? err.message : String(err);
     log("server: ping failed for", `${host}:${port}`, "—", msg);
     return false;
+  }
+}
+
+function findPidOnPort(port: number): number | null {
+  if (process.platform === "win32") {
+    return findPidOnPortWindows(port);
+  }
+  return findPidOnPortUnix(port);
+}
+
+function findPidOnPortUnix(port: number): number | null {
+  try {
+    const out = cp
+      .execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+      .toString()
+      .trim();
+    if (!out) {
+      return null;
+    }
+    const pid = parseInt(out.split("\n")[0], 10);
+    return Number.isFinite(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function findPidOnPortWindows(port: number): number | null {
+  try {
+    const out = cp
+      .execFileSync("netstat", ["-ano"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+      .toString();
+    for (const line of out.split(/\r?\n/)) {
+      const match = line.match(/LISTENING\s+(\d+)\s*$/);
+      if (match && line.includes(`:${port} `)) {
+        return parseInt(match[1], 10);
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 

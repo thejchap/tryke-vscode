@@ -122,7 +122,24 @@
           "description": "Additional arguments to pass to tryke."
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "tryke.restartServer",
+        "title": "Tryke: Restart Server",
+        "category": "Tryke"
+      },
+      {
+        "command": "tryke.startServer",
+        "title": "Tryke: Start Server",
+        "category": "Tryke"
+      },
+      {
+        "command": "tryke.stopServer",
+        "title": "Tryke: Stop Server",
+        "category": "Tryke"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
