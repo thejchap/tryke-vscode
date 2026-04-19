@@ -1,8 +1,30 @@
 {
   "name": "tryke-vscode",
   "displayName": "Tryke",
-  "description": "Tryke test runner integration for VS Code",
+  "description": "Tryke test runner integration for VS Code.",
   "version": "0.0.1",
+  "publisher": "thejchap",
+  "author": {
+    "name": "Justin Chapman"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thejchap/tryke-vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thejchap/tryke-vscode/issues"
+  },
+  "homepage": "https://github.com/thejchap/tryke-vscode#readme",
+  "keywords": [
+    "tryke",
+    "python",
+    "test",
+    "testing",
+    "test runner",
+    "pytest"
+  ],
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -147,7 +169,9 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "package": "vsce package",
+    "publish": "vsce publish"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -155,11 +179,9 @@
     "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.1",
     "eslint": "^9.39.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"
-  },
-  "dependencies": {
-    "@vscode/vsce": "^3.7.1"
   }
 }

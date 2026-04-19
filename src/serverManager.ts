@@ -1,7 +1,7 @@
 import * as cp from "child_process";
 import { TrykeClient } from "./client";
 import { TrykeConfig } from "./config";
-import { log } from "./log";
+import { log, logServer } from "./log";
 
 let serverProcess: cp.ChildProcess | undefined;
 
@@ -25,21 +25,27 @@ export async function ensureServer(config: TrykeConfig): Promise<void> {
   log("server: spawning", config.command, spawnArgs.join(" "));
 
   serverProcess = cp.spawn(config.command, spawnArgs, {
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
 
   serverProcess.unref();
 
+  pipeToServerChannel(serverProcess.stdout, "stdout");
+  pipeToServerChannel(serverProcess.stderr, "stderr");
+
+  logServer(`--- server starting: ${config.command} ${spawnArgs.join(" ")} (pid ${serverProcess.pid}) ---`);
   log("server: spawned pid", serverProcess.pid);
 
   serverProcess.on("error", (err) => {
     log("server: spawn error:", err.message);
+    logServer(`--- server spawn error: ${err.message} ---`);
     serverProcess = undefined;
   });
 
   serverProcess.on("exit", (code, signal) => {
     log("server: exited code =", code, "signal =", signal);
+    logServer(`--- server exited code=${code} signal=${signal} ---`);
     serverProcess = undefined;
   });
 
@@ -170,4 +176,29 @@ function findPidOnPortWindows(port: number): number | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pipeToServerChannel(
+  stream: NodeJS.ReadableStream | null,
+  label: "stdout" | "stderr",
+): void {
+  if (!stream) {
+    return;
+  }
+  let buffer = "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      logServer(label === "stderr" ? `[stderr] ${line}` : line);
+    }
+  });
+  stream.on("end", () => {
+    if (buffer.length > 0) {
+      logServer(label === "stderr" ? `[stderr] ${buffer}` : buffer);
+      buffer = "";
+    }
+  });
 }
