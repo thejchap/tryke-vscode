@@ -140,10 +140,16 @@ export interface JsonRpcNotification<T = unknown> {
 
 // Server RPC param types
 export interface RunParams {
+  run_id: string;
   tests?: string[];
   filter?: string;
   paths?: string[];
   markers?: string;
+}
+
+export interface RunResponse {
+  run_id: string;
+  summary: TrykeRunSummary;
 }
 
 export interface DiscoverParams {
