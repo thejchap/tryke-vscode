@@ -32,10 +32,18 @@ jobs:
       - run: npm ci
       - name: Package extension
         run: npx @vscode/vsce package -o tryke-vscode.vsix
-      - name: Create GitHub release
+      - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" tryke-vscode.vsix --generate-notes
+          TAG: ${{ github.ref_name }}
+        # Idempotent so failed Marketplace publishes can be retried by
+        # re-running the job without deleting the release first.
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" tryke-vscode.vsix --clobber
+          else
+            gh release create "$TAG" tryke-vscode.vsix --generate-notes
+          fi
       - name: Publish to VS Code Marketplace
         run: npx @vscode/vsce publish --packagePath tryke-vscode.vsix -p "$VSCE_PAT"
         env:
