@@ -5,6 +5,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.0.3] - 2026-04-26
 
+- Spawn the tryke server with `--root <workspaceRoot>` and `cwd` set to the
+  workspace folder. Without this, tryke wrote its discovery cache to the
+  extension host's cwd (often `/` on macOS), which is read-only — every
+  server restart had to re-discover from scratch and the user saw a
+  `Read-only file system (os error 30)` warning in the Tryke Server
+  output channel.
 - Track the optional `executed_lines` array on failed-test outcomes
   (added in tryke 0.0.24).
 - Drop the dead `traceback` field on the `error` outcome variant — tryke

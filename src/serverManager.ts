@@ -5,7 +5,10 @@ import { log, logServer } from "./log";
 
 let serverProcess: cp.ChildProcess | undefined;
 
-export async function ensureServer(config: TrykeConfig): Promise<void> {
+export async function ensureServer(
+  config: TrykeConfig,
+  workspaceRoot: string,
+): Promise<void> {
   const endpoint = `${config.server.host}:${config.server.port}`;
   log("server: ensureServer at", endpoint);
 
@@ -21,12 +24,24 @@ export async function ensureServer(config: TrykeConfig): Promise<void> {
     );
   }
 
-  const spawnArgs = ["server", "--port", String(config.server.port)];
-  log("server: spawning", config.command, spawnArgs.join(" "));
+  // Pass `--root` AND set `cwd` to the workspace. tryke writes its discovery
+  // cache to `<root>/.tryke/cache/discovery-v1.bin` and falls back to cwd
+  // when `--root` isn't passed; on macOS the extension host's cwd is often
+  // `/`, which is read-only, so the cache write fails and discovery has to
+  // start from scratch on every server restart.
+  const spawnArgs = [
+    "server",
+    "--port",
+    String(config.server.port),
+    "--root",
+    workspaceRoot,
+  ];
+  log("server: spawning", config.command, spawnArgs.join(" "), "in", workspaceRoot);
 
   serverProcess = cp.spawn(config.command, spawnArgs, {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
+    cwd: workspaceRoot,
   });
 
   serverProcess.unref();

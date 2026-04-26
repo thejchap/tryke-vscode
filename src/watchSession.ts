@@ -35,7 +35,7 @@ export class WatchSession implements vscode.Disposable {
 
     // For server mode, establish a persistent connection
     if (this.runMode === "server") {
-      await ensureServer(this.config);
+      await ensureServer(this.config, this.workspaceRoot);
       this.client = new TrykeClient();
       await this.client.connect(this.config.server.host, this.config.server.port);
     }
@@ -132,7 +132,7 @@ export class WatchSession implements vscode.Disposable {
       if (this.runMode === "server" && this.client) {
         try {
           this.client.disconnect();
-          await ensureServer(this.config);
+          await ensureServer(this.config, this.workspaceRoot);
           this.client = new TrykeClient();
           await this.client.connect(this.config.server.host, this.config.server.port);
           log("watch: reconnected to server");

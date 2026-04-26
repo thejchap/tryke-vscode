@@ -23,7 +23,7 @@ export async function runServer(
   workspaceRoot: string,
   token: vscode.CancellationToken,
 ): Promise<void> {
-  await ensureServer(config);
+  await ensureServer(config, workspaceRoot);
 
   const client = new TrykeClient();
   await client.connect(config.server.host, config.server.port);
