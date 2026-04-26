@@ -32,9 +32,7 @@ export function reportResult(
     }
 
     case "error": {
-      const msg = new vscode.TestMessage(
-        outcome.detail.traceback ?? outcome.detail.message,
-      );
+      const msg = new vscode.TestMessage(outcome.detail.message);
       testRun.errored(testItem, [msg], ms);
       break;
     }
