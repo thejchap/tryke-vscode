@@ -1,0 +1,85 @@
+name: Bug report
+description: Something in the tryke-vscode extension is broken or misbehaving.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. A small, runnable reproducer
+        is the single most useful thing you can include.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing what's wrong.
+      placeholder: "Test results don't update after re-running a single test from the Test Explorer."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: |
+        Smallest TS snippet, project layout, or step-by-step instructions for
+        reproducing the bug in VS Code. Paste code or commands directly — no
+        need for a link.
+      render: typescript
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include relevant output from the "Tryke" output channel and any errors from the VS Code Developer Tools console.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: tryke-vscode-version
+    attributes:
+      label: tryke-vscode version
+      description: Version shown in VS Code's Extensions view.
+      placeholder: "0.0.3"
+    validations:
+      required: true
+
+  - type: input
+    id: tryke-cli-version
+    attributes:
+      label: tryke CLI version
+      description: Output of `tryke --version`.
+      placeholder: "0.0.24"
+    validations:
+      required: true
+
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version
+      description: Output of `code --version | head -1`.
+      placeholder: "1.109.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other (describe in reproducer)
+    validations:
+      required: true

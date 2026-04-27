@@ -1,0 +1,30 @@
+fail_fast: false
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-json
+        # tsconfig.json and .vscode/*.json are JSONC (JSON with comments),
+        # which the standard check-json hook can't parse.
+        exclude: ^(tsconfig\.json|\.vscode/.*\.json)$
+      - id: end-of-file-fixer
+        # eslint.config.mjs is intentionally left without a trailing newline
+        # to keep this CI-only PR free of source-file diffs. A follow-up PR
+        # can drop this exclude after fixing the file in isolation.
+        exclude: ^eslint\.config\.mjs$
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        entry: npm run lint --silent --
+        language: system
+        types: [ts]
+        pass_filenames: false
+      - id: tsc
+        name: tsc type check
+        entry: npx tsc -p ./ --noEmit
+        language: system
+        pass_filenames: false
+        types: [ts]
