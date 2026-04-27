@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Tryke core
+    url: https://github.com/thejchap/tryke/issues
+    about: Bugs or requests for the tryke CLI / core itself belong in that repo.
+  - name: Neovim (neotest) adapter
+    url: https://github.com/thejchap/neotest-tryke/issues
+    about: Bugs or requests for the neotest adapter belong in that repo.
+  - name: VS Code Marketplace listing
+    url: https://marketplace.visualstudio.com/items?itemName=thejchap.tryke-vscode
+    about: Install the extension or read the published description.
