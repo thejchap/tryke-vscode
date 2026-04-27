@@ -3,6 +3,17 @@
 All notable changes to the `tryke-vscode` extension are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.4] - 2026-04-26
+
+- Add `tryke.server.logLevel` setting (`off` | `error` | `warn` | `info` |
+  `debug` | `trace`, default `info`). The selected level is plumbed into the
+  server spawn as `RUST_LOG=tryke=<level>`. Restart the server to pick up a
+  change.
+- Skip the extension-side discovery debounce (300 ms in `controller.ts`) and
+  the watch-mode rerun debounce (500 ms in `watchSession.ts`) when the
+  resolved mode is `server` — the tryke server already debounces both
+  internally and the extra wait just adds latency. Direct mode is unchanged.
+
 ## [0.0.3] - 2026-04-26
 
 - Spawn the tryke server with `--root <workspaceRoot>` and `cwd` set to the
