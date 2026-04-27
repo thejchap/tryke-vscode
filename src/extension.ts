@@ -13,10 +13,15 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("tryke.restartServer", async () => {
       const config = getConfig();
+      const workspaceRoot = getWorkspaceRoot();
+      if (!workspaceRoot) {
+        vscode.window.showErrorMessage("Tryke: open a workspace folder first.");
+        return;
+      }
       log("command: tryke.restartServer");
       try {
         await killServerOnPort(config.server.host, config.server.port);
-        await ensureServer(config);
+        await ensureServer(config, workspaceRoot);
         vscode.window.showInformationMessage("Tryke server restarted.");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -38,9 +43,14 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("tryke.startServer", async () => {
       const config = getConfig();
+      const workspaceRoot = getWorkspaceRoot();
+      if (!workspaceRoot) {
+        vscode.window.showErrorMessage("Tryke: open a workspace folder first.");
+        return;
+      }
       log("command: tryke.startServer");
       try {
-        await ensureServer(config);
+        await ensureServer(config, workspaceRoot);
         vscode.window.showInformationMessage("Tryke server started.");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -49,6 +59,10 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
   );
+}
+
+function getWorkspaceRoot(): string | undefined {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
 export function deactivate() {

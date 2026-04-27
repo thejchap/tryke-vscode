@@ -1,10 +1,11 @@
 import * as vscode from "vscode";
 import { TrykeConfig } from "./config";
 import { TrykeClient } from "./client";
-import { TrykeTestResult, RunParams } from "./types";
+import { RunParams, RunStartParams, TestCompleteParams } from "./types";
 import { reportResult } from "./resultMapper";
 import { ensureServer } from "./serverManager";
 import { buildTestId } from "./testId";
+import { log } from "./log";
 
 let runCounter = 0;
 
@@ -22,13 +23,13 @@ export async function runServer(
   workspaceRoot: string,
   token: vscode.CancellationToken,
 ): Promise<void> {
-  await ensureServer(config);
+  await ensureServer(config, workspaceRoot);
 
   const client = new TrykeClient();
   await client.connect(config.server.host, config.server.port);
 
   try {
-    await runWithClient(client, request, testRun, testMap, config, workspaceRoot, token);
+    await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token, true);
   } finally {
     client.disconnect();
   }
@@ -45,57 +46,14 @@ export async function runServerWithClient(
   token: vscode.CancellationToken,
 ): Promise<void> {
   client.clearNotificationHandlers();
-  const runId = generateRunId();
   try {
-    // The RPC response (not run_complete) is the authoritative terminator:
-    // broadcast notifications can be silently dropped under channel lag, but
-    // the response cannot. Notifications are filtered by run_id so a
-    // concurrent run on the same server can't pollute our results.
-    const runPromise = new Promise<void>((resolve, reject) => {
-      client.onNotification("run_start", (params) => {
-        const p = params as { run_id?: string; tests: { name: string; file_path?: string; module_path: string; groups?: string[] }[] };
-        if (p.run_id !== runId) {
-          return;
-        }
-        if (p.tests) {
-          for (const test of p.tests) {
-            const testId = resolveTestId(test, workspaceRoot);
-            const testItem = testMap.get(testId);
-            if (testItem) {
-              testRun.started(testItem);
-            }
-          }
-        }
-      });
-
-      client.onNotification("test_complete", (params) => {
-        const p = params as { run_id?: string; result: TrykeTestResult };
-        if (p.run_id !== runId) {
-          return;
-        }
-        const testId = resolveTestId(p.result.test, workspaceRoot);
-        const testItem = testMap.get(testId);
-        if (testItem) {
-          reportResult(testRun, testItem, p.result);
-        }
-      });
-
-      // On cancellation, resolve without disconnecting the persistent client
-      const cancelSub = token.onCancellationRequested(() => {
-        cancelSub.dispose();
-        resolve();
-      });
-
-      const params = buildRunParams(request, workspaceRoot, config, runId);
-      client.request("run", params).then(() => resolve(), reject);
-    });
-    await runPromise;
+    await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token, false);
   } finally {
     client.clearNotificationHandlers();
   }
 }
 
-async function runWithClient(
+async function dispatchRun(
   client: TrykeClient,
   request: vscode.TestRunRequest,
   testRun: vscode.TestRun,
@@ -103,47 +61,54 @@ async function runWithClient(
   config: TrykeConfig,
   workspaceRoot: string,
   token: vscode.CancellationToken,
+  disconnectOnCancel: boolean,
 ): Promise<void> {
   const runId = generateRunId();
+  log("server: dispatching run with run_id", runId);
+
   return new Promise<void>((resolve, reject) => {
-    // Register notification handlers before sending request
+    // The RPC response (not run_complete) is the authoritative terminator:
+    // broadcast notifications can be silently dropped under channel lag, but
+    // the response cannot. Notifications are filtered by run_id so a
+    // concurrent run on the same server can't pollute our results.
     client.onNotification("run_start", (params) => {
-      const p = params as { run_id?: string; tests: { name: string; file_path?: string; module_path: string; groups?: string[] }[] };
-      if (p.run_id !== runId) {
+      const { run_id, tests } = params as RunStartParams;
+      if (run_id !== runId) {
         return;
       }
-      if (p.tests) {
-        for (const test of p.tests) {
-          const testId = resolveTestId(test, workspaceRoot);
-          const testItem = testMap.get(testId);
-          if (testItem) {
-            testRun.started(testItem);
-          }
+      if (!tests) {
+        return;
+      }
+      for (const test of tests) {
+        const testId = buildTestId(test, workspaceRoot);
+        const testItem = testMap.get(testId);
+        if (testItem) {
+          testRun.started(testItem);
         }
       }
     });
 
     client.onNotification("test_complete", (params) => {
-      const p = params as { run_id?: string; result: TrykeTestResult };
-      if (p.run_id !== runId) {
+      const { run_id, result } = params as TestCompleteParams;
+      if (run_id !== runId) {
         return;
       }
-      const testId = resolveTestId(p.result.test, workspaceRoot);
+      const testId = buildTestId(result.test, workspaceRoot);
       const testItem = testMap.get(testId);
       if (testItem) {
-        reportResult(testRun, testItem, p.result);
+        reportResult(testRun, testItem, result);
       }
     });
 
-    token.onCancellationRequested(() => {
-      client.disconnect();
+    const cancelSub = token.onCancellationRequested(() => {
+      cancelSub.dispose();
+      if (disconnectOnCancel) {
+        client.disconnect();
+      }
       resolve();
     });
 
     const params = buildRunParams(request, workspaceRoot, config, runId);
-
-    // RPC response is the authoritative terminator (not run_complete, which
-    // can be dropped under broadcast channel lag).
     client.request("run", params).then(() => resolve(), reject);
   });
 }
@@ -198,17 +163,4 @@ function collectLeafServerIds(item: vscode.TestItem, ids: string[]): void {
   } else {
     item.children.forEach((child) => collectLeafServerIds(child, ids));
   }
-}
-
-function resolveTestId(
-  test: {
-    name: string;
-    file_path?: string;
-    module_path: string;
-    groups?: string[];
-    case_label?: string;
-  },
-  workspaceRoot: string,
-): string {
-  return buildTestId(test, workspaceRoot);
 }
