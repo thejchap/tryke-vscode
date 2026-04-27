@@ -74,6 +74,19 @@
           "default": true,
           "description": "Automatically stop the tryke server when the extension deactivates."
         },
+        "tryke.server.logLevel": {
+          "type": "string",
+          "enum": [
+            "off",
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
+          "default": "info",
+          "description": "Log verbosity for the tryke server when the extension spawns it. Maps to RUST_LOG=tryke=<level>. Applies to subsequent spawns; restart the server (Tryke: Restart Server) to pick up a change."
+        },
         "tryke.workers": {
           "type": [
             "number",

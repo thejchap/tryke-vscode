@@ -3,6 +3,7 @@ import { getConfig } from "./config";
 import { discoverTests } from "./discovery";
 import { resolveRunner } from "./runner";
 import { runDirect } from "./directRunner";
+import { hasActiveServer } from "./serverManager";
 import { WatchSession } from "./watchSession";
 
 export class TrykeTestController implements vscode.Disposable {
@@ -38,15 +39,30 @@ export class TrykeTestController implements vscode.Disposable {
     this.disposables.push(changedProfile);
 
     this.watcher = vscode.workspace.createFileSystemWatcher("**/*.py");
-    const debouncedDiscover = () => {
+    const onChange = () => {
+      // Skip the extension-side debounce in server mode — the tryke server
+      // already debounces file-change-driven re-discovery internally, so the
+      // extra 300ms wait just adds latency. Gate is: raw mode === "server",
+      // or mode === "auto" with an extension-spawned server currently live.
+      const mode = getConfig().mode;
+      const inServerMode =
+        mode === "server" || (mode === "auto" && hasActiveServer());
+      if (inServerMode) {
+        if (this.debounceTimer) {
+          clearTimeout(this.debounceTimer);
+          this.debounceTimer = undefined;
+        }
+        void this.discover();
+        return;
+      }
       if (this.debounceTimer) {
         clearTimeout(this.debounceTimer);
       }
       this.debounceTimer = setTimeout(() => this.discover(), 300);
     };
-    this.watcher.onDidChange(debouncedDiscover);
-    this.watcher.onDidCreate(debouncedDiscover);
-    this.watcher.onDidDelete(debouncedDiscover);
+    this.watcher.onDidChange(onChange);
+    this.watcher.onDidCreate(onChange);
+    this.watcher.onDidDelete(onChange);
     this.disposables.push(this.watcher);
   }
 

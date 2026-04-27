@@ -36,12 +36,19 @@ export async function ensureServer(
     "--root",
     workspaceRoot,
   ];
-  log("server: spawning", config.command, spawnArgs.join(" "), "in", workspaceRoot);
+  // Map `tryke.server.logLevel` to `RUST_LOG=tryke=<level>` (or `RUST_LOG=off`
+  // for "off") so users can crank up verbosity without restarting VS Code with
+  // a manual env var. tracing_subscriber accepts `off` as the directive that
+  // silences everything; non-"off" levels are scoped to the `tryke` target.
+  const rustLog =
+    config.server.logLevel === "off" ? "off" : `tryke=${config.server.logLevel}`;
+  log("server: spawning", config.command, spawnArgs.join(" "), "in", workspaceRoot, "RUST_LOG=" + rustLog);
 
   serverProcess = cp.spawn(config.command, spawnArgs, {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
     cwd: workspaceRoot,
+    env: { ...process.env, RUST_LOG: rustLog },
   });
 
   serverProcess.unref();
@@ -86,6 +93,19 @@ export function stopServer(): void {
     serverProcess.kill("SIGTERM");
     serverProcess = undefined;
   }
+}
+
+/**
+ * True iff the extension currently tracks a live server child process.
+ *
+ * This only catches servers spawned by *this* extension instance — it does
+ * not detect a foreign server (e.g. one started by `tryke server` in a
+ * terminal). It is good enough for "are we in server mode right now?"
+ * gating where the worst case of a false negative is one extra debounced
+ * dispatch.
+ */
+export function hasActiveServer(): boolean {
+  return serverProcess !== undefined;
 }
 
 /**
