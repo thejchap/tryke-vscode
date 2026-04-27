@@ -89,6 +89,21 @@ export class WatchSession implements vscode.Disposable {
     const relPath = path.relative(this.workspaceRoot, uri.fsPath);
     this.pendingChanges.add(relPath);
 
+    // Skip the extension-side debounce in server mode — the tryke server
+    // already debounces watch-mode reruns internally, so the extra 500ms
+    // wait just adds latency. `runMode` is the resolved mode (auto already
+    // collapsed into direct/server in start()), so this catches auto→server.
+    if (this.runMode === "server") {
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = undefined;
+      }
+      if (!this.running) {
+        void this.executePendingRun();
+      }
+      return;
+    }
+
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }

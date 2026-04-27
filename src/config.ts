@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 
+export type LogLevel = "off" | "error" | "warn" | "info" | "debug" | "trace";
+
 export interface TrykeConfig {
   command: string;
   mode: "direct" | "server" | "auto";
@@ -8,6 +10,7 @@ export interface TrykeConfig {
     port: number;
     autoStart: boolean;
     autoStop: boolean;
+    logLevel: LogLevel;
   };
   workers: number | null;
   failFast: boolean;
@@ -29,6 +32,7 @@ export function getConfig(): TrykeConfig {
       port: cfg.get<number>("server.port", 2337),
       autoStart: cfg.get<boolean>("server.autoStart", true),
       autoStop: cfg.get<boolean>("server.autoStop", true),
+      logLevel: cfg.get<LogLevel>("server.logLevel", "info"),
     },
     workers: cfg.get<number | null>("workers", null),
     failFast: cfg.get<boolean>("failFast", false),
