@@ -4,7 +4,7 @@ import { TrykeEvent } from "./types";
 import { TrykeConfig } from "./config";
 import { reportResult } from "./resultMapper";
 import { log } from "./log";
-import { buildTestId } from "./testId";
+import { buildTestId, splitCaseLabel } from "./testId";
 
 export async function runDirect(
   request: vscode.TestRunRequest,
@@ -168,11 +168,18 @@ function buildArgs(
         paths.add(filePart);
         collectLeafNames(item, names);
       } else {
-        // Individual test — id is "relPath::group1::...::testName"
+        // Individual test — id is "relPath::group1::...::testName[case]?"
+        // Strip a `[case_label]` suffix before sending to `-k`: tryke's
+        // filter expression syntax rejects brackets ("invalid filter
+        // expression"), and tryke has no per-case CLI selector. Running
+        // the parent function instead runs every case under it; the
+        // result mapper still routes each `test_complete` to the right
+        // TestItem, so the case the user clicked still gets a status.
         const parts = item.id.split("::");
         if (parts.length >= 2) {
           paths.add(parts[0]);
-          names.push(parts[parts.length - 1]);
+          const { name } = splitCaseLabel(parts[parts.length - 1]);
+          names.push(name);
         }
       }
     }
@@ -182,7 +189,10 @@ function buildArgs(
     }
 
     if (names.length > 0) {
-      args.push("-k", names.join(" or "));
+      // De-dup so multiple selected cases of the same function don't
+      // produce `-k "test_x or test_x or test_x"`.
+      const unique = Array.from(new Set(names));
+      args.push("-k", unique.join(" or "));
     }
   }
 

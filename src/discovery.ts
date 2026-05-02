@@ -5,6 +5,7 @@ import { TrykeEvent, TrykeTestItem, TrykeDiscoveryWarning } from "./types";
 import { TrykeConfig } from "./config";
 import { log } from "./log";
 import { buildTestId } from "./testId";
+import { findCaseLine, findDescribeLine, clearSourceCache } from "./sourceScan";
 
 export async function discoverTests(
   controller: vscode.TestController,
@@ -12,6 +13,12 @@ export async function discoverTests(
   workspaceRoot: string,
 ): Promise<Map<string, vscode.TestItem>> {
   const testMap = new Map<string, vscode.TestItem>();
+
+  // Tryke's CLI doesn't report per-case line numbers (every case shares the
+  // decorated function's line), so discovery scans the source for each
+  // `t.test.case("label", ...)` site. Clear the cache so any file edits
+  // since the last discovery are picked up.
+  clearSourceCache();
 
   const { tests, warnings } = await collectTests(config, workspaceRoot);
   log("discovery: collected", tests.length, "tests in", workspaceRoot);
@@ -55,7 +62,9 @@ export async function discoverTests(
         controller,
         fileItem,
         relPath,
-        test.groups ?? [],
+        absPath,
+        fileUri,
+        test,
         testMap,
       );
 
@@ -64,10 +73,19 @@ export async function discoverTests(
       const label = test.display_name ?? leafName;
       const testItem = controller.createTestItem(testId, label, fileUri);
 
-      if (test.line_number != null) {
+      // For parametrized cases, `line_number` is the decorated function's
+      // line — every case for the same function would otherwise share it,
+      // collapsing all per-case gutter signs onto one row. Scan the
+      // source for the exact `t.test.case("label", ...)` declaration so
+      // each case gets a per-line range.
+      let line = test.line_number;
+      if (line != null && test.case_label) {
+        line = findCaseLine(absPath, test.case_label, line);
+      }
+      if (line != null) {
         testItem.range = new vscode.Range(
-          new vscode.Position(test.line_number - 1, 0),
-          new vscode.Position(test.line_number - 1, 0),
+          new vscode.Position(line - 1, 0),
+          new vscode.Position(line - 1, 0),
         );
       }
 
@@ -84,23 +102,39 @@ function getOrCreateGroup(
   controller: vscode.TestController,
   fileItem: vscode.TestItem,
   relPath: string,
-  groups: string[],
+  absPath: string,
+  fileUri: vscode.Uri,
+  test: TrykeTestItem,
   testMap: Map<string, vscode.TestItem>,
 ): vscode.TestItem {
   let parent = fileItem;
   let idPrefix = relPath;
+  const groups = test.groups ?? [];
 
   for (const groupName of groups) {
     idPrefix = `${idPrefix}::${groupName}`;
     const existing = testMap.get(idPrefix);
     if (existing) {
       parent = existing;
-    } else {
-      const groupItem = controller.createTestItem(idPrefix, groupName);
-      parent.children.add(groupItem);
-      testMap.set(idPrefix, groupItem);
-      parent = groupItem;
+      continue;
     }
+    // Pin the namespace to its `with t.describe("name"):` line so the
+    // gutter gets a sign on the describe block. Use the first child
+    // test's line as the search anchor — multiple describes in one file
+    // get disambiguated by proximity.
+    const groupItem = controller.createTestItem(idPrefix, groupName, fileUri);
+    if (test.line_number != null) {
+      const describeLine = findDescribeLine(absPath, groupName, test.line_number);
+      if (describeLine != null) {
+        groupItem.range = new vscode.Range(
+          new vscode.Position(describeLine - 1, 0),
+          new vscode.Position(describeLine - 1, 0),
+        );
+      }
+    }
+    parent.children.add(groupItem);
+    testMap.set(idPrefix, groupItem);
+    parent = groupItem;
   }
 
   return parent;
