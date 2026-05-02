@@ -58,22 +58,6 @@ See the [Tryke docs](https://thejchap.github.io/tryke/) for writing tests.
 | `tryke.baseBranch` | `null` | Base branch for changed-file detection. |
 | `tryke.args` | `[]` | Extra arguments forwarded to `tryke`. |
 
-## Parametrized tests
-
-`@test.cases` functions show up as one Test Explorer item per case label. Discovery reads `tryke --collect-only` JSON output, so both dict and list forms map through unchanged:
-
-```python
-@test.cases(
-    zero={"n": 0, "expected": 0},
-    one={"n": 1, "expected": 1},
-    ten={"n": 10, "expected": 100},
-)
-def square(n: int, expected: int) -> None:
-    expect(n * n).to_equal(expected)
-```
-
-The tree shows `square[zero]`, `square[one]`, `square[ten]`. Running an individual case dispatches `tryke test … -k 'square[zero]'`, and per-case `test_complete` events map back to the matching tree item by label.
-
 ## Related
 
 - [thejchap/tryke](https://github.com/thejchap/tryke) — the test runner itself.
