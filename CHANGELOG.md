@@ -3,6 +3,26 @@
 All notable changes to the `tryke-vscode` extension are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.5] - 2026-05-02
+
+- Fix: per-case status icons in the gutter for `@t.test.cases(...)` no longer
+  collapse onto a single line. Discovery now scans the source for each
+  `t.test.case("label", ...)` (typed, kwargs, and tuple-list forms) and
+  assigns each case its own range.
+- Fix: `with t.describe("Group"):` blocks now show a status icon in the
+  gutter. Namespace `TestItem`s gained a URI and a range pinned to the
+  matching describe line; multiple describes in one file are
+  disambiguated by proximity to the first child test.
+- Fix (server mode): single-test runs no longer report "The test run did
+  not record any output". The tryke server flushes the run RPC response
+  before its `test_complete` and `run_complete` notifications, so we now
+  also wait (bounded 2s) for `run_complete` before ending the test run.
+- Fix (direct mode): running an individual parametrised case no longer
+  errors with `Error: invalid filter expression` — the `[case_label]`
+  suffix is stripped before building `-k` since tryke's filter syntax
+  rejects brackets. Selected names are also de-duped so multiple cases
+  of the same function don't produce a redundant `-k "x or x or x"`.
+
 ## [0.0.4] - 2026-04-26
 
 - Add `tryke.server.logLevel` setting (`off` | `error` | `warn` | `info` |
