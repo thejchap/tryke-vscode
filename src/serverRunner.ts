@@ -67,10 +67,8 @@ async function dispatchRun(
   log("server: dispatching run with run_id", runId);
 
   return new Promise<void>((resolve, reject) => {
-    // The RPC response (not run_complete) is the authoritative terminator:
-    // broadcast notifications can be silently dropped under channel lag, but
-    // the response cannot. Notifications are filtered by run_id so a
-    // concurrent run on the same server can't pollute our results.
+    // Notifications are filtered by run_id so a concurrent run on the same
+    // server can't pollute our results.
     client.onNotification("run_start", (params) => {
       const { run_id, tests } = params as RunStartParams;
       if (run_id !== runId) {
@@ -100,6 +98,26 @@ async function dispatchRun(
       }
     });
 
+    // The server flushes the RPC response BEFORE its `test_complete` and
+    // `run_complete` notifications, so awaiting only the response leaves
+    // us calling testRun.end() before any per-test outcomes have arrived
+    // — the test results panel then shows "did not record any output".
+    // Wait for `run_complete` (emitted last) too, with a bounded timeout
+    // so a server that crashes before emitting it can't hang the run.
+    let runCompleteSeen = false;
+    let runCompleteResolve: (() => void) | undefined;
+    const runCompletePromise = new Promise<void>((res) => {
+      runCompleteResolve = res;
+    });
+    client.onNotification("run_complete", (params) => {
+      const { run_id } = params as { run_id?: string };
+      if (run_id !== undefined && run_id !== runId) {
+        return;
+      }
+      runCompleteSeen = true;
+      runCompleteResolve?.();
+    });
+
     const cancelSub = token.onCancellationRequested(() => {
       cancelSub.dispose();
       if (disconnectOnCancel) {
@@ -109,7 +127,15 @@ async function dispatchRun(
     });
 
     const params = buildRunParams(request, workspaceRoot, config, runId);
-    client.request("run", params).then(() => resolve(), reject);
+    client.request("run", params).then(async () => {
+      if (!runCompleteSeen) {
+        await Promise.race([
+          runCompletePromise,
+          new Promise<void>((res) => setTimeout(res, 2000)),
+        ]);
+      }
+      resolve();
+    }, reject);
   });
 }
 
