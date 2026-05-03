@@ -4,6 +4,7 @@ import * as path from "path";
 import { TrykeEvent, TrykeTestItem, TrykeDiscoveryWarning } from "./types";
 import { TrykeConfig } from "./config";
 import { log } from "./log";
+import { resolveVariables } from "./resolveVariables";
 import { buildTestId } from "./testId";
 import { findCaseLine, findDescribeLine, clearSourceCache } from "./sourceScan";
 
@@ -150,7 +151,15 @@ function collectTests(
   cwd: string,
 ): Promise<CollectResult> {
   return new Promise((resolve, reject) => {
-    const args = ["test", "--collect-only", "--reporter", "json", ...config.args];
+    const args = ["test", "--collect-only", "--reporter", "json"];
+    if (config.python) {
+      // Discovery shells out to `tryke test --collect-only`, which spawns
+      // a worker — so it needs the same interpreter as a test run, otherwise
+      // collection silently fails when the system python lacks the tryke
+      // package and the test tree never populates.
+      args.push("--python", resolveVariables(config.python, cwd));
+    }
+    args.push(...config.args);
     const proc = cp.spawn(config.command, args, { cwd });
 
     let stdout = "";

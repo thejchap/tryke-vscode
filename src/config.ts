@@ -4,6 +4,7 @@ export type LogLevel = "off" | "error" | "warn" | "info" | "debug" | "trace";
 
 export interface TrykeConfig {
   command: string;
+  python: string | null;
   mode: "direct" | "server" | "auto";
   server: {
     host: string;
@@ -26,6 +27,7 @@ export function getConfig(): TrykeConfig {
   const cfg = vscode.workspace.getConfiguration("tryke");
   return {
     command: cfg.get<string>("command", "tryke"),
+    python: cfg.get<string | null>("python", null),
     mode: cfg.get<"direct" | "server" | "auto">("mode", "auto"),
     server: {
       host: cfg.get<string>("server.host", "127.0.0.1"),
