@@ -8,12 +8,34 @@ import { resolveVariables } from "./resolveVariables";
 import { buildTestId } from "./testId";
 import { findCaseLine, findDescribeLine, clearSourceCache } from "./sourceScan";
 
+export interface LabelInput {
+  name: string;
+  display_name?: string;
+  case_label?: string;
+}
+
+// `display_name` carries the @test("name") label (e.g. "basic"), while
+// `case_label` carries the per-case label (e.g. "1 + 1"). Earlier code did
+// `display_name ?? leafName`, which dropped the case label whenever a
+// function-level display name was present — collapsing every case for a
+// labelled @test.cases function onto the same row.
+export function buildTestLabel(test: LabelInput): string {
+  const baseName = test.display_name ?? test.name;
+  return test.case_label ? `${baseName}[${test.case_label}]` : baseName;
+}
+
+export interface DiscoveryResult {
+  rootItems: vscode.TestItem[];
+  testMap: Map<string, vscode.TestItem>;
+}
+
 export async function discoverTests(
   controller: vscode.TestController,
   config: TrykeConfig,
   workspaceRoot: string,
-): Promise<Map<string, vscode.TestItem>> {
+): Promise<DiscoveryResult> {
   const testMap = new Map<string, vscode.TestItem>();
+  const rootItems: vscode.TestItem[] = [];
 
   // Tryke's CLI doesn't report per-case line numbers (every case shares the
   // decorated function's line), so discovery scans the source for each
@@ -27,7 +49,7 @@ export async function discoverTests(
     log("discovery warning:", warning.file_path, warning.kind, warning.message);
   }
   if (!tests.length) {
-    return testMap;
+    return { rootItems, testMap };
   }
 
   // Group tests by file (resolved to absolute paths)
@@ -43,12 +65,15 @@ export async function discoverTests(
     group.push(test);
   }
 
-  // Build test tree
+  // Build test tree. Items are NOT attached to `controller.items` here —
+  // the caller swaps them in atomically once the full tree is built, so
+  // there's no window where the test view is empty and a click resolves a
+  // bare relative id like `tests/foo.py` against the wrong base.
   for (const [absPath, fileTests] of byFile) {
     const relPath = path.relative(workspaceRoot, absPath);
     const fileUri = vscode.Uri.file(absPath);
     const fileItem = controller.createTestItem(relPath, relPath, fileUri);
-    controller.items.add(fileItem);
+    rootItems.push(fileItem);
     testMap.set(relPath, fileItem);
 
     // Sort tests so that tests in the same group are adjacent
@@ -70,8 +95,7 @@ export async function discoverTests(
       );
 
       const testId = buildTestId(test, workspaceRoot);
-      const leafName = test.case_label ? `${test.name}[${test.case_label}]` : test.name;
-      const label = test.display_name ?? leafName;
+      const label = buildTestLabel(test);
       const testItem = controller.createTestItem(testId, label, fileUri);
 
       // For parametrized cases, `line_number` is the decorated function's
@@ -96,7 +120,7 @@ export async function discoverTests(
   }
 
   log("discovery: testMap keys:", [...testMap.keys()]);
-  return testMap;
+  return { rootItems, testMap };
 }
 
 function getOrCreateGroup(

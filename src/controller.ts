@@ -12,6 +12,12 @@ export class TrykeTestController implements vscode.Disposable {
   private watcher: vscode.FileSystemWatcher;
   private debounceTimer: NodeJS.Timeout | undefined;
   private disposables: vscode.Disposable[] = [];
+  // Incremented for each active WatchSession. While > 0, the
+  // controller-level watcher skips its rediscover so the active session
+  // owns file-change handling — otherwise the two watchers race and the
+  // controller's `items.replace` invalidates the TestItem references the
+  // session is mid-run on.
+  private activeWatchSessions = 0;
 
   constructor() {
     this.controller = vscode.tests.createTestController("tryke", "Tryke");
@@ -40,6 +46,9 @@ export class TrykeTestController implements vscode.Disposable {
 
     this.watcher = vscode.workspace.createFileSystemWatcher("**/*.py");
     const onChange = () => {
+      if (this.activeWatchSessions > 0) {
+        return;
+      }
       // Skip the extension-side debounce in server mode — the tryke server
       // already debounces file-change-driven re-discovery internally, so the
       // extra 300ms wait just adds latency. Gate is: raw mode === "server",
@@ -66,6 +75,12 @@ export class TrykeTestController implements vscode.Disposable {
     this.disposables.push(this.watcher);
   }
 
+  // Exposed for unit tests so the gate behavior can be exercised without
+  // running a full WatchSession.
+  hasActiveWatchSession(): boolean {
+    return this.activeWatchSessions > 0;
+  }
+
   private async discover(): Promise<void> {
     const workspaceRoot = this.getWorkspaceRoot();
     if (!workspaceRoot) {
@@ -74,16 +89,15 @@ export class TrykeTestController implements vscode.Disposable {
 
     const config = getConfig();
 
-    // Clear existing items
-    this.controller.items.replace([]);
-    this.testMap.clear();
-
+    // Atomic swap: keep the existing tree visible while the new one is
+    // being collected, then replace in one shot. The old approach
+    // `items.replace([])` then awaiting discovery left the tree empty for
+    // the duration of the rediscover, which surfaced as "file not found"
+    // when a click landed in that window.
     try {
-      this.testMap = await discoverTests(
-        this.controller,
-        config,
-        workspaceRoot,
-      );
+      const result = await discoverTests(this.controller, config, workspaceRoot);
+      this.testMap = result.testMap;
+      this.controller.items.replace(result.rootItems);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       vscode.window.showWarningMessage(`Tryke discovery failed: ${msg}`);
@@ -111,7 +125,12 @@ export class TrykeTestController implements vscode.Disposable {
         token,
       );
       this.disposables.push(session);
-      await session.start();
+      this.activeWatchSessions += 1;
+      try {
+        await session.start();
+      } finally {
+        this.activeWatchSessions = Math.max(0, this.activeWatchSessions - 1);
+      }
       return;
     }
 
