@@ -3,6 +3,24 @@
 All notable changes to the `tryke-vscode` extension are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.6] - 2026-05-02
+
+- Add `tryke.python` setting (`string | null`, default `null`). Forwarded as
+  `--python <path>` to `tryke server`, `tryke test` (direct mode), and the
+  collect-only spawn used during discovery. Required for users whose
+  workspace venv isn't active in the environment that launched VS Code —
+  with tryke 0.0.26 the runner no longer auto-finds `.venv/bin/python3`.
+  Supports VS Code variables: `${workspaceFolder}`,
+  `${workspaceFolder:NAME}`, `${userHome}`, `${env:VAR}`. Example:
+  `${workspaceFolder}/.venv/bin/python3` (Unix) or
+  `${workspaceFolder}/.venv/Scripts/python.exe` (Windows).
+- Switch the server-spawn env from `RUST_LOG=tryke=<level>` to
+  `TRYKE_LOG=<level>`. On tryke 0.0.27+ this surfaces both rust runtime
+  logs **and** python worker logs in the Tryke Server output panel; on
+  earlier versions the env var is ignored. The previous `RUST_LOG` was
+  silently dropped by `env_logger::Builder::new()` upstream, so the
+  panel had been effectively empty regardless.
+
 ## [0.0.5] - 2026-05-02
 
 - Fix: per-case status icons in the gutter for `@t.test.cases(...)` no longer
