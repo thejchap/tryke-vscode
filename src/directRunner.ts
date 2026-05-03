@@ -123,6 +123,10 @@ function buildArgs(
 ): string[] {
   const args = ["test", "--reporter", "json"];
 
+  if (config.python) {
+    args.push("--python", config.python);
+  }
+
   if (config.workers != null) {
     args.push("-j", String(config.workers));
   }

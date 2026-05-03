@@ -36,19 +36,30 @@ export async function ensureServer(
     "--root",
     workspaceRoot,
   ];
-  // Map `tryke.server.logLevel` to `RUST_LOG=tryke=<level>` (or `RUST_LOG=off`
-  // for "off") so users can crank up verbosity without restarting VS Code with
-  // a manual env var. tracing_subscriber accepts `off` as the directive that
-  // silences everything; non-"off" levels are scoped to the `tryke` target.
-  const rustLog =
-    config.server.logLevel === "off" ? "off" : `tryke=${config.server.logLevel}`;
-  log("server: spawning", config.command, spawnArgs.join(" "), "in", workspaceRoot, "RUST_LOG=" + rustLog);
+  if (config.python) {
+    // Without this, tryke uses bare `python`/`python3` from PATH, which won't
+    // have the project's tryke python package installed if the venv isn't
+    // already active in the spawning environment — workers fail to start.
+    spawnArgs.push("--python", config.python);
+  }
+  // Map `tryke.server.logLevel` to `TRYKE_LOG=<level>`. Unlike `RUST_LOG`,
+  // this propagates to the spawned python workers too, so worker stderr
+  // shows up in the same output panel as the rust runtime's logs.
+  const trykeLog = config.server.logLevel;
+  log(
+    "server: spawning",
+    config.command,
+    spawnArgs.join(" "),
+    "in",
+    workspaceRoot,
+    "TRYKE_LOG=" + trykeLog,
+  );
 
   serverProcess = cp.spawn(config.command, spawnArgs, {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
     cwd: workspaceRoot,
-    env: { ...process.env, RUST_LOG: rustLog },
+    env: { ...process.env, TRYKE_LOG: trykeLog },
   });
 
   serverProcess.unref();

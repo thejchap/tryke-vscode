@@ -44,6 +44,14 @@
           "default": "tryke",
           "description": "Path to the tryke executable."
         },
+        "tryke.python": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Path to the Python interpreter used to spawn worker processes. Passed to tryke as `--python`. When unset, tryke falls back to `python` on Windows / `python3` on Unix from PATH — which usually isn't what you want unless your venv is already active in the spawning environment. Point this at your project venv (e.g. `${workspaceFolder}/.venv/bin/python3`) or use `[tool.tryke] python` in pyproject.toml."
+        },
         "tryke.mode": {
           "type": "string",
           "enum": [
@@ -85,7 +93,7 @@
             "trace"
           ],
           "default": "info",
-          "description": "Log verbosity for the tryke server when the extension spawns it. Maps to RUST_LOG=tryke=<level>. Applies to subsequent spawns; restart the server (Tryke: Restart Server) to pick up a change."
+          "description": "Log verbosity for the tryke server when the extension spawns it. Maps to TRYKE_LOG=<level>, which lights up both the rust runtime and the spawned python workers in the Tryke Server output panel. Applies to subsequent spawns; restart the server (Tryke: Restart Server) to pick up a change."
         },
         "tryke.workers": {
           "type": [
