@@ -2,6 +2,7 @@ import * as cp from "child_process";
 import { TrykeClient } from "./client";
 import { TrykeConfig } from "./config";
 import { log, logServer } from "./log";
+import { resolveVariables } from "./resolveVariables";
 
 let serverProcess: cp.ChildProcess | undefined;
 
@@ -40,7 +41,9 @@ export async function ensureServer(
     // Without this, tryke uses bare `python`/`python3` from PATH, which won't
     // have the project's tryke python package installed if the venv isn't
     // already active in the spawning environment — workers fail to start.
-    spawnArgs.push("--python", config.python);
+    // `resolveVariables` substitutes `${workspaceFolder}` / `${userHome}` /
+    // `${env:VAR}` so users can write a portable config value.
+    spawnArgs.push("--python", resolveVariables(config.python, workspaceRoot));
   }
   // Map `tryke.server.logLevel` to `TRYKE_LOG=<level>`. Unlike `RUST_LOG`,
   // this propagates to the spawned python workers too, so worker stderr

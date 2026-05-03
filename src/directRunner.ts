@@ -4,6 +4,7 @@ import { TrykeEvent } from "./types";
 import { TrykeConfig } from "./config";
 import { reportResult } from "./resultMapper";
 import { log } from "./log";
+import { resolveVariables } from "./resolveVariables";
 import { buildTestId, splitCaseLabel } from "./testId";
 
 export async function runDirect(
@@ -124,7 +125,7 @@ function buildArgs(
   const args = ["test", "--reporter", "json"];
 
   if (config.python) {
-    args.push("--python", config.python);
+    args.push("--python", resolveVariables(config.python, workspaceRoot));
   }
 
   if (config.workers != null) {
