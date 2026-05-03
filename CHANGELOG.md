@@ -3,6 +3,24 @@
 All notable changes to the `tryke-vscode` extension are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.7] - 2026-05-02
+
+- Fix: parametrised `@test("name").cases(...)` cases now show distinct
+  labels (`name[case_label]`) instead of collapsing to the function-level
+  display name three times in a row. Discovery had been preferring
+  `display_name` over the case-suffixed leaf when both were set.
+- Fix (watch mode, server): test re-runs no longer silently no-op when a
+  file is saved during a continuous run. The controller's file watcher
+  was racing the watch session's own watcher, rebuilding the test tree
+  underneath the in-flight run and orphaning the `TestItem` references
+  the session was acting on. The controller-level rediscover is now
+  suppressed while a watch session is active.
+- Fix: clicking a test in the tree no longer occasionally fails with
+  "The editor could not be opened because the file was not found".
+  Discovery used to clear the test tree, await the rediscover, and
+  rebuild — leaving the tree empty for the duration of the rediscover.
+  Items are now built off-tree and swapped in atomically at the end.
+
 ## [0.0.6] - 2026-05-02
 
 - Add `tryke.python` setting (`string | null`, default `null`). Forwarded as
