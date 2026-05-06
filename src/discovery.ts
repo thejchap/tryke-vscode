@@ -171,6 +171,11 @@ interface CollectResult {
   warnings: TrykeDiscoveryWarning[];
 }
 
+// A wedged tryke binary (e.g. one stuck on a corrupt cache or a hanging
+// dynamic import) used to block discovery indefinitely. Cap the spawn so a
+// hang surfaces as a logged error and the test tree stays usable.
+const COLLECT_TIMEOUT_MS = 30_000;
+
 function collectTests(
   config: TrykeConfig,
   cwd: string,
@@ -189,6 +194,12 @@ function collectTests(
 
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      log("discovery: timed out after", COLLECT_TIMEOUT_MS, "ms — killing pid", proc.pid);
+      proc.kill("SIGKILL");
+    }, COLLECT_TIMEOUT_MS);
 
     proc.stdout.on("data", (data: Buffer) => {
       stdout += data.toString();
@@ -199,10 +210,20 @@ function collectTests(
     });
 
     proc.on("error", (err) => {
+      clearTimeout(timer);
       reject(new Error(`Failed to spawn ${config.command}: ${err.message}`));
     });
 
     proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(
+          new Error(
+            `${config.command} discovery timed out after ${COLLECT_TIMEOUT_MS} ms`,
+          ),
+        );
+        return;
+      }
       if (code !== 0) {
         reject(
           new Error(

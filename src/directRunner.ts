@@ -31,7 +31,7 @@ export async function runDirect(
     proc.stdout.on("data", (data: Buffer) => {
       buffer += data.toString();
       const lines = buffer.split("\n");
-      buffer = lines.pop()!;
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -51,7 +51,19 @@ export async function runDirect(
           continue;
         }
         log("event:", parsed.data.event);
-        handleEvent(parsed.data, testRun, testMap, workspaceRoot);
+        // handleEvent walks user-provided test items + vscode APIs; if
+        // anything throws here the unhandled error escapes the event loop
+        // and crashes the extension host. Catching it locally + killing the
+        // child lets the test run end cleanly with a logged failure.
+        try {
+          handleEvent(parsed.data, testRun, testMap, workspaceRoot);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log("handleEvent threw — killing child:", msg);
+          proc.kill("SIGTERM");
+          reject(err instanceof Error ? err : new Error(msg));
+          return;
+        }
       }
     });
 

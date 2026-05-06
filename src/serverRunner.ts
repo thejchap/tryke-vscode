@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as crypto from "crypto";
 import { TrykeConfig } from "./config";
 import { TrykeClient } from "./client";
 import { RunParams } from "./types";
@@ -12,11 +13,17 @@ import { ensureServer } from "./serverManager";
 import { buildTestId } from "./testId";
 import { log } from "./log";
 
-let runCounter = 0;
+// How long to wait for the server's `run_complete` notification after the
+// `run` RPC response has come back. The server flushes the response before
+// it broadcasts its tail of `test_complete` and `run_complete` notifications,
+// so resolving on the response alone calls `testRun.end()` before per-test
+// outcomes arrive ("did not record any output" in the panel). 2s is well
+// above any normal flush latency on a healthy connection; if it hits, the
+// server has almost certainly crashed mid-run and this is the recovery path.
+const RUN_COMPLETE_GRACE_MS = 2000;
 
 function generateRunId(): string {
-  runCounter += 1;
-  return `vscode-${process.pid}-${Date.now().toString(36)}-${runCounter}`;
+  return `vscode-${crypto.randomUUID()}`;
 }
 
 
@@ -110,12 +117,7 @@ async function dispatchRun(
       }
     });
 
-    // The server flushes the RPC response BEFORE its `test_complete` and
-    // `run_complete` notifications, so awaiting only the response leaves
-    // us calling testRun.end() before any per-test outcomes have arrived
-    // — the test results panel then shows "did not record any output".
-    // Wait for `run_complete` (emitted last) too, with a bounded timeout
-    // so a server that crashes before emitting it can't hang the run.
+    // See RUN_COMPLETE_GRACE_MS at module top for why we wait at all.
     let runCompleteSeen = false;
     let runCompleteResolve: (() => void) | undefined;
     const runCompletePromise = new Promise<void>((res) => {
@@ -148,7 +150,7 @@ async function dispatchRun(
       if (!runCompleteSeen) {
         await Promise.race([
           runCompletePromise,
-          new Promise<void>((res) => setTimeout(res, 2000)),
+          new Promise<void>((res) => setTimeout(res, RUN_COMPLETE_GRACE_MS)),
         ]);
       }
       resolve();
