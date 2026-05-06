@@ -109,7 +109,7 @@ export class WatchSession implements vscode.Disposable {
     }
     this.debounceTimer = setTimeout(() => {
       if (!this.running) {
-        this.executePendingRun();
+        void this.executePendingRun();
       }
     }, 500);
   }
@@ -173,8 +173,8 @@ export class WatchSession implements vscode.Disposable {
       // Scoped watch: only re-run tests in changed files that are within the original scope
       const includeIds = new Set(originalInclude.map((i) => i.id));
       for (const [id, item] of this.getTestMap()) {
-        const filePart = id.split("::")[0];
-        if (changedFiles.has(filePart) && isInScope(id, includeIds)) {
+        const [filePart] = id.split("::");
+        if (filePart && changedFiles.has(filePart) && isInScope(id, includeIds)) {
           // Only add file-level or leaf items to avoid duplicates
           if (!id.includes("::") || item.children.size === 0) {
             items.push(item);

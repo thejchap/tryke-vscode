@@ -197,7 +197,11 @@ function findPidOnPortUnix(port: number): number | null {
     if (!out) {
       return null;
     }
-    const pid = parseInt(out.split("\n")[0], 10);
+    const [firstLine] = out.split("\n");
+    if (!firstLine) {
+      return null;
+    }
+    const pid = parseInt(firstLine, 10);
     return Number.isFinite(pid) ? pid : null;
   } catch {
     return null;
@@ -213,7 +217,7 @@ function findPidOnPortWindows(port: number): number | null {
       .toString();
     for (const line of out.split(/\r?\n/)) {
       const match = line.match(/LISTENING\s+(\d+)\s*$/);
-      if (match && line.includes(`:${port} `)) {
+      if (match && match[1] && line.includes(`:${port} `)) {
         return parseInt(match[1], 10);
       }
     }

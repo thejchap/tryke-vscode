@@ -23,7 +23,7 @@ export function buildTestId(test: TestIdInput, workspaceRoot: string): string {
 // function while preserving the per-case identity.
 export function splitCaseLabel(name: string): { name: string; caseLabel?: string } {
   const match = name.match(/^(.+)\[([^\]]*)\]$/);
-  if (!match) {
+  if (!match || match[1] === undefined || match[2] === undefined) {
     return { name };
   }
   return { name: match[1], caseLabel: match[2] };

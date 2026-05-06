@@ -126,7 +126,7 @@ async function dispatchRun(
       resolve();
     });
 
-    const params = buildRunParams(request, workspaceRoot, config, runId);
+    const params = buildRunParams(request, config, runId);
     client.request("run", params).then(async () => {
       if (!runCompleteSeen) {
         await Promise.race([
@@ -141,7 +141,6 @@ async function dispatchRun(
 
 function buildRunParams(
   request: vscode.TestRunRequest,
-  workspaceRoot: string,
   config: TrykeConfig,
   runId: string,
 ): RunParams {

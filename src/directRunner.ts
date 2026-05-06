@@ -169,9 +169,11 @@ function buildArgs(
         paths.add(item.id);
       } else if (item.children.size > 0) {
         // Group/namespace item: collect leaf test names
-        const filePart = item.id.split("::")[0];
-        paths.add(filePart);
-        collectLeafNames(item, names);
+        const [filePart] = item.id.split("::");
+        if (filePart) {
+          paths.add(filePart);
+          collectLeafNames(item, names);
+        }
       } else {
         // Individual test — id is "relPath::group1::...::testName[case]?"
         // Strip a `[case_label]` suffix before sending to `-k`: tryke's
@@ -181,9 +183,11 @@ function buildArgs(
         // result mapper still routes each `test_complete` to the right
         // TestItem, so the case the user clicked still gets a status.
         const parts = item.id.split("::");
-        if (parts.length >= 2) {
-          paths.add(parts[0]);
-          const { name } = splitCaseLabel(parts[parts.length - 1]);
+        const filePart = parts[0];
+        const leafPart = parts[parts.length - 1];
+        if (parts.length >= 2 && filePart && leafPart) {
+          paths.add(filePart);
+          const { name } = splitCaseLabel(leafPart);
           names.push(name);
         }
       }
@@ -209,7 +213,10 @@ function buildArgs(
 function collectLeafNames(item: vscode.TestItem, names: string[]): void {
   if (item.children.size === 0) {
     const parts = item.id.split("::");
-    names.push(parts[parts.length - 1]);
+    const last = parts[parts.length - 1];
+    if (last) {
+      names.push(last);
+    }
   } else {
     item.children.forEach((child) => collectLeafNames(child, names));
   }

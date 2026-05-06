@@ -40,9 +40,10 @@ export class TrykeClient {
             continue;
           }
           try {
-            this.handleMessage(JSON.parse(trimmed));
-          } catch {
-            // Skip malformed JSON
+            const parsed = JSON.parse(trimmed) as JsonRpcResponse | JsonRpcNotification;
+            this.handleMessage(parsed);
+          } catch (err) {
+            log("client: skipping malformed JSON line:", err instanceof Error ? err.message : String(err));
           }
         }
       });
@@ -107,25 +108,21 @@ export class TrykeClient {
   }
 
   private handleMessage(msg: JsonRpcResponse | JsonRpcNotification): void {
-    if ("id" in msg && msg.id != null) {
-      // Response to a request
-      const response = msg as JsonRpcResponse;
-      const pending = this.pending.get(response.id);
+    if ("id" in msg) {
+      const pending = this.pending.get(msg.id);
       if (pending) {
-        this.pending.delete(response.id);
-        if (response.error) {
-          pending.reject(new Error(response.error.message));
+        this.pending.delete(msg.id);
+        if (msg.error) {
+          pending.reject(new Error(msg.error.message));
         } else {
-          pending.resolve(response.result);
+          pending.resolve(msg.result);
         }
       }
     } else if ("method" in msg) {
-      // Notification
-      const notification = msg as JsonRpcNotification;
-      const handlers = this.notificationHandlers.get(notification.method);
+      const handlers = this.notificationHandlers.get(msg.method);
       if (handlers) {
         for (const handler of handlers) {
-          handler(notification.params);
+          handler(msg.params);
         }
       }
     }
