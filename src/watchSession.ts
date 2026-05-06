@@ -257,7 +257,7 @@ export class WatchSession implements vscode.Disposable {
   }
 }
 
-function isInScope(testId: string, includeIds: Set<string>): boolean {
+export function isInScope(testId: string, includeIds: Set<string>): boolean {
   // Check exact match
   if (includeIds.has(testId)) {
     return true;

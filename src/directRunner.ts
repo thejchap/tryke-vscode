@@ -125,7 +125,7 @@ function testIdFromResult(
   return buildTestId(test, workspaceRoot);
 }
 
-function buildArgs(
+export function buildArgs(
   request: vscode.TestRunRequest,
   config: TrykeConfig,
   workspaceRoot: string,
@@ -218,7 +218,7 @@ function buildArgs(
   return args;
 }
 
-function collectLeafNames(item: vscode.TestItem, names: string[]): void {
+export function collectLeafNames(item: vscode.TestItem, names: string[]): void {
   if (item.children.size === 0) {
     const parts = item.id.split("::");
     const last = parts[parts.length - 1];

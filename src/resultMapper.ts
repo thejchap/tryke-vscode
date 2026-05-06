@@ -62,7 +62,7 @@ export function reportResult(
   }
 }
 
-function buildFailureMessages(
+export function buildFailureMessages(
   detail: FailedDetail,
   testItem: vscode.TestItem,
 ): vscode.TestMessage[] {

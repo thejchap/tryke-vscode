@@ -34,7 +34,7 @@ export interface TrykeConfig {
 // `cfg.get(...)` call returns whatever string is on disk. Coerce here so a
 // typo in settings degrades to a logged warning + the default rather than a
 // surprise in the runner.
-function coerceEnum<T extends readonly string[]>(
+export function coerceEnum<T extends readonly string[]>(
   raw: unknown,
   allowed: T,
   fallback: T[number],
@@ -83,7 +83,7 @@ export function getConfig(): TrykeConfig {
 
 // `dist` allows null in addition to the enum, so it doesn't fit the generic
 // coerceEnum signature.
-function coerceDistOrNull(raw: unknown): (typeof DIST)[number] | null {
+export function coerceDistOrNull(raw: unknown): (typeof DIST)[number] | null {
   if (raw === null || raw === undefined) {
     return null;
   }

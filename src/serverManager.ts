@@ -186,23 +186,46 @@ function findPidOnPort(port: number): number | null {
   return findPidOnPortUnix(port);
 }
 
+// Parses `lsof -ti tcp:<port> -sTCP:LISTEN` output: a newline-separated list
+// of PIDs (just numbers, one per line). Returns the first valid PID, or null.
+export function parsePidFromLsofOutput(out: string): number | null {
+  const trimmed = out.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const [firstLine] = trimmed.split("\n");
+  if (!firstLine) {
+    return null;
+  }
+  const pid = parseInt(firstLine, 10);
+  return Number.isFinite(pid) ? pid : null;
+}
+
+// Parses `netstat -ano` output for the LISTENING entry on the given port.
+// netstat columns vary across locales; we anchor on the trailing PID and
+// require the local-address column to contain `:<port> ` so a different port
+// number elsewhere in the table doesn't match.
+export function parsePidFromNetstatOutput(
+  out: string,
+  port: number,
+): number | null {
+  for (const line of out.split(/\r?\n/)) {
+    const match = line.match(/LISTENING\s+(\d+)\s*$/);
+    if (match && match[1] && line.includes(`:${port} `)) {
+      return parseInt(match[1], 10);
+    }
+  }
+  return null;
+}
+
 function findPidOnPortUnix(port: number): number | null {
   try {
     const out = cp
       .execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
         stdio: ["ignore", "pipe", "ignore"],
       })
-      .toString()
-      .trim();
-    if (!out) {
-      return null;
-    }
-    const [firstLine] = out.split("\n");
-    if (!firstLine) {
-      return null;
-    }
-    const pid = parseInt(firstLine, 10);
-    return Number.isFinite(pid) ? pid : null;
+      .toString();
+    return parsePidFromLsofOutput(out);
   } catch {
     return null;
   }
@@ -215,13 +238,7 @@ function findPidOnPortWindows(port: number): number | null {
         stdio: ["ignore", "pipe", "ignore"],
       })
       .toString();
-    for (const line of out.split(/\r?\n/)) {
-      const match = line.match(/LISTENING\s+(\d+)\s*$/);
-      if (match && match[1] && line.includes(`:${port} `)) {
-        return parseInt(match[1], 10);
-      }
-    }
-    return null;
+    return parsePidFromNetstatOutput(out, port);
   } catch {
     return null;
   }

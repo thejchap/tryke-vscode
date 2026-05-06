@@ -156,7 +156,7 @@ async function dispatchRun(
   });
 }
 
-function buildRunParams(
+export function buildRunParams(
   request: vscode.TestRunRequest,
   config: TrykeConfig,
   runId: string,
@@ -197,7 +197,7 @@ function buildRunParams(
   return params;
 }
 
-function collectLeafServerIds(item: vscode.TestItem, ids: string[]): void {
+export function collectLeafServerIds(item: vscode.TestItem, ids: string[]): void {
   if (item.children.size === 0) {
     // Strip groups: send file::name (tryke's expected ID format)
     const parts = item.id.split("::");
