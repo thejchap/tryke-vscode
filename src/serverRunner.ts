@@ -1,7 +1,12 @@
 import * as vscode from "vscode";
 import { TrykeConfig } from "./config";
 import { TrykeClient } from "./client";
-import { RunParams, RunStartParams, TestCompleteParams } from "./types";
+import { RunParams } from "./types";
+import {
+  RunStartParamsSchema,
+  TestCompleteParamsSchema,
+  RunCompleteParamsSchema,
+} from "./schema";
 import { reportResult } from "./resultMapper";
 import { ensureServer } from "./serverManager";
 import { buildTestId } from "./testId";
@@ -70,11 +75,13 @@ async function dispatchRun(
     // Notifications are filtered by run_id so a concurrent run on the same
     // server can't pollute our results.
     client.onNotification("run_start", (params) => {
-      const { run_id, tests } = params as RunStartParams;
-      if (run_id !== runId) {
+      const parsed = RunStartParamsSchema.safeParse(params);
+      if (!parsed.success) {
+        log("server: dropping malformed run_start:", parsed.error.message);
         return;
       }
-      if (!tests) {
+      const { run_id, tests } = parsed.data;
+      if (run_id !== runId) {
         return;
       }
       for (const test of tests) {
@@ -87,7 +94,12 @@ async function dispatchRun(
     });
 
     client.onNotification("test_complete", (params) => {
-      const { run_id, result } = params as TestCompleteParams;
+      const parsed = TestCompleteParamsSchema.safeParse(params);
+      if (!parsed.success) {
+        log("server: dropping malformed test_complete:", parsed.error.message);
+        return;
+      }
+      const { run_id, result } = parsed.data;
       if (run_id !== runId) {
         return;
       }
@@ -110,7 +122,12 @@ async function dispatchRun(
       runCompleteResolve = res;
     });
     client.onNotification("run_complete", (params) => {
-      const { run_id } = params as { run_id?: string };
+      const parsed = RunCompleteParamsSchema.safeParse(params);
+      if (!parsed.success) {
+        log("server: dropping malformed run_complete:", parsed.error.message);
+        return;
+      }
+      const { run_id } = parsed.data;
       if (run_id !== undefined && run_id !== runId) {
         return;
       }

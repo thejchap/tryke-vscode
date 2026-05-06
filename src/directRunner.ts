@@ -1,11 +1,12 @@
 import * as vscode from "vscode";
 import * as cp from "child_process";
 import { TrykeEvent } from "./types";
+import { TrykeEventSchema } from "./schema";
 import { TrykeConfig } from "./config";
 import { reportResult } from "./resultMapper";
 import { log } from "./log";
 import { resolveVariables } from "./resolveVariables";
-import { buildTestId, splitCaseLabel } from "./testId";
+import { buildTestId, splitCaseLabel, TestIdInput } from "./testId";
 
 export async function runDirect(
   request: vscode.TestRunRequest,
@@ -37,13 +38,20 @@ export async function runDirect(
         if (!trimmed) {
           continue;
         }
+        let raw: unknown;
         try {
-          const event = JSON.parse(trimmed) as TrykeEvent;
-          log("event:", event.event, "event" in event ? JSON.stringify(event).slice(0, 300) : "");
-          handleEvent(event, testRun, testMap, workspaceRoot);
+          raw = JSON.parse(trimmed);
         } catch {
           log("non-json stdout line:", trimmed.slice(0, 200));
+          continue;
         }
+        const parsed = TrykeEventSchema.safeParse(raw);
+        if (!parsed.success) {
+          log("dropping unexpected event shape:", parsed.error.message, "payload:", trimmed.slice(0, 200));
+          continue;
+        }
+        log("event:", parsed.data.event);
+        handleEvent(parsed.data, testRun, testMap, workspaceRoot);
       }
     });
 
@@ -61,12 +69,18 @@ export async function runDirect(
     proc.on("close", (code) => {
       log("process closed with code", code);
       // Process any remaining buffer
-      if (buffer.trim()) {
+      const tail = buffer.trim();
+      if (tail) {
         try {
-          const event = JSON.parse(buffer.trim()) as TrykeEvent;
-          handleEvent(event, testRun, testMap, workspaceRoot);
-        } catch {
-          // ignore
+          const raw: unknown = JSON.parse(tail);
+          const parsed = TrykeEventSchema.safeParse(raw);
+          if (parsed.success) {
+            handleEvent(parsed.data, testRun, testMap, workspaceRoot);
+          } else {
+            log("dropping trailing buffer:", parsed.error.message);
+          }
+        } catch (err) {
+          log("trailing buffer not json:", err instanceof Error ? err.message : String(err));
         }
       }
       resolve();
@@ -105,13 +119,7 @@ function handleEvent(
 }
 
 function testIdFromResult(
-  test: {
-    name: string;
-    file_path?: string;
-    module_path: string;
-    groups?: string[];
-    case_label?: string;
-  },
+  test: TestIdInput,
   workspaceRoot: string,
 ): string {
   return buildTestId(test, workspaceRoot);

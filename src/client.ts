@@ -1,5 +1,6 @@
 import * as net from "net";
-import { JsonRpcRequest, JsonRpcResponse, JsonRpcNotification } from "./types";
+import { JsonRpcRequest, JsonRpcMessage } from "./types";
+import { JsonRpcMessageSchema } from "./schema";
 import { log } from "./log";
 
 type NotificationHandler = (params: unknown) => void;
@@ -39,12 +40,19 @@ export class TrykeClient {
           if (!trimmed) {
             continue;
           }
+          let raw: unknown;
           try {
-            const parsed = JSON.parse(trimmed) as JsonRpcResponse | JsonRpcNotification;
-            this.handleMessage(parsed);
+            raw = JSON.parse(trimmed);
           } catch (err) {
             log("client: skipping malformed JSON line:", err instanceof Error ? err.message : String(err));
+            continue;
           }
+          const result = JsonRpcMessageSchema.safeParse(raw);
+          if (!result.success) {
+            log("client: dropping non-RPC message:", result.error.message, "payload:", trimmed.slice(0, 200));
+            continue;
+          }
+          this.handleMessage(result.data);
         }
       });
 
@@ -107,7 +115,7 @@ export class TrykeClient {
     this.buffer = "";
   }
 
-  private handleMessage(msg: JsonRpcResponse | JsonRpcNotification): void {
+  private handleMessage(msg: JsonRpcMessage): void {
     if ("id" in msg) {
       const pending = this.pending.get(msg.id);
       if (pending) {

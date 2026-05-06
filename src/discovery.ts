@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import * as cp from "child_process";
 import * as path from "path";
-import { TrykeEvent, TrykeTestItem, TrykeDiscoveryWarning } from "./types";
+import { TrykeTestItem, TrykeDiscoveryWarning } from "./types";
+import { TrykeEventSchema } from "./schema";
 import { TrykeConfig } from "./config";
 import { log } from "./log";
 import { resolveVariables } from "./resolveVariables";
@@ -10,8 +11,8 @@ import { findCaseLine, findDescribeLine, clearSourceCache } from "./sourceScan";
 
 export interface LabelInput {
   name: string;
-  display_name?: string;
-  case_label?: string;
+  display_name?: string | undefined;
+  case_label?: string | undefined;
 }
 
 // `display_name` carries the @test("name") label (e.g. "basic"), while
@@ -218,15 +219,21 @@ function collectTests(
         if (!trimmed) {
           continue;
         }
+        let raw: unknown;
         try {
-          const event = JSON.parse(trimmed) as TrykeEvent;
-          if (event.event === "collect_complete") {
-            tests.push(...event.tests);
-          } else if (event.event === "discovery_warning") {
-            warnings.push(event.warning);
-          }
+          raw = JSON.parse(trimmed);
         } catch {
-          // Skip non-JSON lines
+          continue;
+        }
+        const parsed = TrykeEventSchema.safeParse(raw);
+        if (!parsed.success) {
+          log("discovery: dropping unexpected event shape:", parsed.error.message);
+          continue;
+        }
+        if (parsed.data.event === "collect_complete") {
+          tests.push(...parsed.data.tests);
+        } else if (parsed.data.event === "discovery_warning") {
+          warnings.push(parsed.data.warning);
         }
       }
       resolve({ tests, warnings });

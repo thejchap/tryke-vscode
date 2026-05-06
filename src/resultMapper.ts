@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
-import { TrykeTestResult, TrykeDuration } from "./types";
+import { TrykeTestResult, TrykeTestOutcome, TrykeDuration } from "./types";
+
+type FailedDetail = Extract<TrykeTestOutcome, { status: "failed" }>["detail"];
 
 export function durationMs(d: TrykeDuration): number {
   return d.secs * 1000 + d.nanos / 1_000_000;
@@ -61,7 +63,7 @@ export function reportResult(
 }
 
 function buildFailureMessages(
-  detail: { message: string; traceback?: string; assertions?: { expression: string; file?: string; line: number; span_offset: number; span_length: number; expected: string; received: string }[] },
+  detail: FailedDetail,
   testItem: vscode.TestItem,
 ): vscode.TestMessage[] {
   const messages: vscode.TestMessage[] = [];

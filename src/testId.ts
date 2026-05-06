@@ -2,10 +2,10 @@ import * as path from "path";
 
 export interface TestIdInput {
   name: string;
-  file_path?: string;
+  file_path?: string | undefined;
   module_path: string;
-  groups?: string[];
-  case_label?: string;
+  groups?: string[] | undefined;
+  case_label?: string | undefined;
 }
 
 // Builds the canonical VS Code TestItem id for a tryke test.
