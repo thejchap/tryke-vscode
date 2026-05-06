@@ -5,6 +5,12 @@ import { log } from "./log";
 
 type NotificationHandler = (params: unknown) => void;
 
+// How long to wait for `socket.end()` to complete a graceful half-close
+// before falling back to `destroy()`. The peer should ack the FIN almost
+// instantly on a healthy connection; this is a backstop for cases where
+// the server is wedged or the network has half-disappeared.
+const DISCONNECT_GRACE_MS = 500;
+
 export class TrykeClient {
   private socket: net.Socket | undefined;
   private nextId = 1;
@@ -33,7 +39,7 @@ export class TrykeClient {
       socket.on("data", (data: Buffer) => {
         this.buffer += data.toString();
         const lines = this.buffer.split("\n");
-        this.buffer = lines.pop()!;
+        this.buffer = lines.pop() ?? "";
 
         for (const line of lines) {
           const trimmed = line.trim();
@@ -106,13 +112,35 @@ export class TrykeClient {
   }
 
   disconnect(): void {
-    if (this.socket) {
-      this.socket.destroy();
-      this.socket = undefined;
+    // Reject pending requests up front. The "close" event handler also
+    // rejects pending, but disconnect() returns synchronously while close
+    // fires asynchronously — without this, an awaiter racing the close
+    // event silently hangs forever.
+    for (const [, pending] of this.pending) {
+      pending.reject(new Error("Client disconnected"));
     }
     this.pending.clear();
     this.notificationHandlers.clear();
     this.buffer = "";
+
+    const socket = this.socket;
+    this.socket = undefined;
+    if (!socket) {
+      return;
+    }
+
+    // Half-close so any in-flight write gets flushed; force destroy if
+    // the peer doesn't close its side within the grace window.
+    socket.end();
+    const fallback = setTimeout(() => {
+      if (!socket.destroyed) {
+        log("client: disconnect grace expired — forcing destroy");
+        socket.destroy();
+      }
+    }, DISCONNECT_GRACE_MS);
+    socket.once("close", () => {
+      clearTimeout(fallback);
+    });
   }
 
   private handleMessage(msg: JsonRpcMessage): void {
