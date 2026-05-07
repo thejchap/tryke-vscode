@@ -27,23 +27,33 @@ function stopServer(server: net.Server): Promise<void> {
 suite("TrykeClient.disconnect", () => {
   let server: net.Server;
   let port: number;
+  let connections: net.Socket[];
 
   setup(async () => {
     const started = await startServer();
     server = started.server;
     port = started.port;
+    connections = [];
+    // Track every accepted socket so teardown can destroy them before
+    // server.close() — without this, a connection whose read buffer was
+    // never drained (no `data` listener) keeps the server's close callback
+    // pending and the teardown hits mocha's 2s timeout.
+    server.on("connection", (sock) => {
+      connections.push(sock);
+    });
   });
 
   teardown(async () => {
+    for (const sock of connections) {
+      sock.destroy();
+    }
     await stopServer(server);
   });
 
   test("rejects pending requests with a clear error", async () => {
     const client = new TrykeClient();
-    server.on("connection", () => {
-      // Accept the connection but never reply — the request should be
-      // rejected by disconnect(), not hang forever.
-    });
+    // Server accepts via the setup tracker but never replies — the request
+    // should be rejected by disconnect(), not hang forever.
     await client.connect("127.0.0.1", port);
 
     const reqPromise = client.request("never_responds");
@@ -54,7 +64,6 @@ suite("TrykeClient.disconnect", () => {
 
   test("rejects every pending request, not just the first", async () => {
     const client = new TrykeClient();
-    server.on("connection", () => {});
     await client.connect("127.0.0.1", port);
 
     const a = client.request("a");
