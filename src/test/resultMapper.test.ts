@@ -128,25 +128,34 @@ suite("durationMs", () => {
   });
 });
 
+// Filter out the run-level digest line so state-transition tests below
+// can stay focused on the testRun.passed/.failed/.errored/.skipped call
+// shape. The digest is covered by its own suite.
+function transitions(calls: Call[]): Call[] {
+  return calls.filter((c) => c.kind !== "output");
+}
+
 suite("reportResult", () => {
   test("passed fires testRun.passed with duration", () => {
     const { run, calls } = makeStubRun();
     reportResult(run, makeStubItem(), result({ status: "passed" }, { duration: { secs: 0, nanos: 5_000_000 } }));
-    assert.deepStrictEqual(calls, [{ kind: "passed", ms: 5 }]);
+    assert.deepStrictEqual(transitions(calls), [{ kind: "passed", ms: 5 }]);
   });
 
   test("x_failed (expected failure that did fail) is recorded as passed", () => {
     const { run, calls } = makeStubRun();
     reportResult(run, makeStubItem(), result({ status: "x_failed" }));
-    assert.strictEqual(calls.length, 1);
-    assert.strictEqual(calls[0]?.kind, "passed");
+    const t = transitions(calls);
+    assert.strictEqual(t.length, 1);
+    assert.strictEqual(t[0]?.kind, "passed");
   });
 
   test("x_passed (expected failure that passed) is recorded as failed", () => {
     const { run, calls } = makeStubRun();
     reportResult(run, makeStubItem(), result({ status: "x_passed" }));
-    assert.strictEqual(calls.length, 1);
-    const call = calls[0] as FailedCall;
+    const t = transitions(calls);
+    assert.strictEqual(t.length, 1);
+    const call = t[0] as FailedCall;
     assert.strictEqual(call.kind, "failed");
     assert.strictEqual(call.messages.length, 1);
     assert.match(messageText(call.messages[0]), /Expected to fail but passed/);
@@ -159,8 +168,9 @@ suite("reportResult", () => {
       makeStubItem(),
       result({ status: "error", detail: { message: "import error" } }),
     );
-    assert.strictEqual(calls.length, 1);
-    const call = calls[0] as ErroredCall;
+    const t = transitions(calls);
+    assert.strictEqual(t.length, 1);
+    const call = t[0] as ErroredCall;
     assert.strictEqual(call.kind, "errored");
     assert.strictEqual(messageText(call.messages[0]), "import error");
   });
@@ -169,7 +179,7 @@ suite("reportResult", () => {
     for (const status of ["skipped", "todo"] as const) {
       const { run, calls } = makeStubRun();
       reportResult(run, makeStubItem(), result({ status }));
-      assert.deepStrictEqual(calls, [{ kind: "skipped" }]);
+      assert.deepStrictEqual(transitions(calls), [{ kind: "skipped" }]);
     }
   });
 
@@ -180,8 +190,9 @@ suite("reportResult", () => {
       makeStubItem(),
       result({ status: "failed", detail: { message: "boom" } }),
     );
-    assert.strictEqual(calls.length, 1);
-    assert.strictEqual(calls[0]?.kind, "failed");
+    const t = transitions(calls);
+    assert.strictEqual(t.length, 1);
+    assert.strictEqual(t[0]?.kind, "failed");
   });
 
   test("stdout and stderr are appended with CRLF normalization", () => {
@@ -191,7 +202,10 @@ suite("reportResult", () => {
       makeStubItem(),
       result({ status: "passed" }, { stdout: "a\nb", stderr: "x\ny" }),
     );
-    const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
+    const outputs = calls
+      .filter((c): c is OutputCall => c.kind === "output")
+      // drop the run-level banner so this test asserts only on stdout/stderr
+      .filter((c) => !c.text.startsWith("PASS "));
     assert.deepStrictEqual(
       outputs.map((c) => c.text),
       ["a\r\nb", "x\r\ny"],
@@ -205,7 +219,71 @@ suite("reportResult", () => {
       makeStubItem(),
       result({ status: "passed" }, { stdout: "", stderr: "" }),
     );
-    assert.strictEqual(calls.filter((c) => c.kind === "output").length, 0);
+    // Only the run-level banner; no stdout/stderr appended.
+    const outputs = calls.filter((c) => c.kind === "output");
+    assert.strictEqual(outputs.length, 1);
+  });
+});
+
+// VS Code's Test Results panel reads from the run's output stream and
+// shows "did not record any output" when it's empty. Per-test stdout/
+// stderr is routed to a per-test sub-stream, so without an unscoped
+// `appendOutput` we'd hit that empty-state message on every assertion-
+// only run. These tests pin the digest format so a future refactor
+// doesn't silently regress the panel.
+suite("reportResult run-level digest", () => {
+  test("emits a PASS line for passed", () => {
+    const { run, calls } = makeStubRun();
+    reportResult(run, makeStubItem(), result({ status: "passed" }, { duration: { secs: 0, nanos: 5_000_000 } }));
+    const banner = (calls[1] as OutputCall).text;
+    assert.match(banner, /^PASS tests\/x\.py::t \(5\.0ms\)\r\n$/);
+  });
+
+  test("emits a FAIL line plus the failure body for failed", () => {
+    const { run, calls } = makeStubRun();
+    reportResult(
+      run,
+      makeStubItem(),
+      result({ status: "failed", detail: { message: "boom\nat line 12" } }),
+    );
+    const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
+    assert.strictEqual(outputs.length, 2, "banner + body");
+    assert.match(outputs[0]!.text, /^FAIL tests\/x\.py::t \(.*ms\)\r\n$/);
+    assert.match(outputs[1]!.text, /boom\r\n {2}at line 12\r\n$/);
+  });
+
+  test("error includes the message body indented after the banner", () => {
+    const { run, calls } = makeStubRun();
+    reportResult(
+      run,
+      makeStubItem(),
+      result({ status: "error", detail: { message: "import error" } }),
+    );
+    const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
+    assert.match(outputs[0]!.text, /^ERROR /);
+    assert.match(outputs[1]!.text, /import error/);
+  });
+
+  for (const [status, banner] of [
+    ["skipped", "SKIP"],
+    ["todo", "TODO"],
+    ["x_failed", "XFAIL"],
+  ] as const) {
+    test(`emits a ${banner} line for ${status}`, () => {
+      const { run, calls } = makeStubRun();
+      reportResult(run, makeStubItem(), result({ status }));
+      const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
+      assert.strictEqual(outputs.length, 1);
+      assert.match(outputs[0]!.text, new RegExp(`^${banner} `));
+    });
+  }
+
+  test("x_passed (banner is XPASS, body explains)", () => {
+    const { run, calls } = makeStubRun();
+    reportResult(run, makeStubItem(), result({ status: "x_passed" }));
+    const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
+    assert.match(outputs[0]!.text, /^XPASS /);
+    assert.match(outputs[1]!.text, /Expected to fail but passed/);
   });
 });
 
