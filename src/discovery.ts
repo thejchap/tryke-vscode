@@ -1,17 +1,20 @@
 import * as vscode from "vscode";
 import * as cp from "child_process";
 import * as path from "path";
-import { TrykeEvent, TrykeTestItem, TrykeDiscoveryWarning } from "./types";
+import { TrykeTestItem, TrykeDiscoveryWarning } from "./types";
+import { TrykeEventSchema } from "./schema";
 import { TrykeConfig } from "./config";
 import { log } from "./log";
 import { resolveVariables } from "./resolveVariables";
 import { buildTestId } from "./testId";
 import { findCaseLine, findDescribeLine, clearSourceCache } from "./sourceScan";
 
+// `string | null | undefined` because both fields map to Rust `Option<T>`
+// without skip_serializing_if and arrive on the wire as `null`, not absent.
 export interface LabelInput {
   name: string;
-  display_name?: string;
-  case_label?: string;
+  display_name?: string | null | undefined;
+  case_label?: string | null | undefined;
 }
 
 // `display_name` carries the @test("name") label (e.g. "basic"), while
@@ -170,6 +173,11 @@ interface CollectResult {
   warnings: TrykeDiscoveryWarning[];
 }
 
+// A wedged tryke binary (e.g. one stuck on a corrupt cache or a hanging
+// dynamic import) used to block discovery indefinitely. Cap the spawn so a
+// hang surfaces as a logged error and the test tree stays usable.
+const COLLECT_TIMEOUT_MS = 30_000;
+
 function collectTests(
   config: TrykeConfig,
   cwd: string,
@@ -188,6 +196,12 @@ function collectTests(
 
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      log("discovery: timed out after", COLLECT_TIMEOUT_MS, "ms — killing pid", proc.pid);
+      proc.kill("SIGKILL");
+    }, COLLECT_TIMEOUT_MS);
 
     proc.stdout.on("data", (data: Buffer) => {
       stdout += data.toString();
@@ -198,10 +212,20 @@ function collectTests(
     });
 
     proc.on("error", (err) => {
+      clearTimeout(timer);
       reject(new Error(`Failed to spawn ${config.command}: ${err.message}`));
     });
 
     proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(
+          new Error(
+            `${config.command} discovery timed out after ${COLLECT_TIMEOUT_MS} ms`,
+          ),
+        );
+        return;
+      }
       if (code !== 0) {
         reject(
           new Error(
@@ -218,15 +242,21 @@ function collectTests(
         if (!trimmed) {
           continue;
         }
+        let raw: unknown;
         try {
-          const event = JSON.parse(trimmed) as TrykeEvent;
-          if (event.event === "collect_complete") {
-            tests.push(...event.tests);
-          } else if (event.event === "discovery_warning") {
-            warnings.push(event.warning);
-          }
+          raw = JSON.parse(trimmed);
         } catch {
-          // Skip non-JSON lines
+          continue;
+        }
+        const parsed = TrykeEventSchema.safeParse(raw);
+        if (!parsed.success) {
+          log("discovery: dropping unexpected event shape:", parsed.error.message);
+          continue;
+        }
+        if (parsed.data.event === "collect_complete") {
+          tests.push(...parsed.data.tests);
+        } else if (parsed.data.event === "discovery_warning") {
+          warnings.push(parsed.data.warning);
         }
       }
       resolve({ tests, warnings });

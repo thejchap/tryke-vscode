@@ -65,6 +65,9 @@ export function findCaseLine(filePath: string, label: string, startLine: number)
   let best: number | undefined;
   for (let i = lo; i <= hi; i++) {
     const line = lines[i - 1];
+    if (line === undefined) {
+      continue;
+    }
     for (const pattern of patterns) {
       if (pattern.test(line)) {
         if (best === undefined || Math.abs(i - startLine) < Math.abs(best - startLine)) {
@@ -106,6 +109,9 @@ export function findDescribeLine(
   let best: number | undefined;
   for (let i = 1; i <= lines.length; i++) {
     const line = lines[i - 1];
+    if (line === undefined) {
+      continue;
+    }
     if (!patterns.some((p) => p.test(line))) {
       continue;
     }

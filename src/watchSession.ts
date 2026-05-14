@@ -9,6 +9,14 @@ import { log } from "./log";
 
 type RunMode = "direct" | "server";
 
+// Reconnect policy: try a small number of times with exponential backoff
+// before giving up and disposing the session. Without a cap, a server that
+// stays down (e.g. tryke binary uninstalled mid-watch) would leave the
+// session in a half-built state — `client` reassigned but never connected,
+// so every subsequent re-run throws "Not connected".
+const RECONNECT_MAX_ATTEMPTS = 3;
+const RECONNECT_BASE_DELAY_MS = 200;
+
 export class WatchSession implements vscode.Disposable {
   private watcher: vscode.FileSystemWatcher | undefined;
   private pendingChanges = new Set<string>();
@@ -109,60 +117,91 @@ export class WatchSession implements vscode.Disposable {
     }
     this.debounceTimer = setTimeout(() => {
       if (!this.running) {
-        this.executePendingRun();
+        void this.executePendingRun();
       }
     }, 500);
   }
 
   private async executePendingRun(): Promise<void> {
-    if (this.disposed || this.pendingChanges.size === 0) {
-      return;
-    }
+    // Loop instead of recursing: changes that arrive while a run is in
+    // flight accumulate in `pendingChanges` and are picked up on the next
+    // iteration. The previous tail-recursive shape had no depth bound, so a
+    // tight save loop on a flaky server could grow the call stack.
+    while (!this.disposed && this.pendingChanges.size > 0) {
+      this.running = true;
+      const changedFiles = new Set(this.pendingChanges);
+      this.pendingChanges.clear();
 
-    this.running = true;
-    const changedFiles = new Set(this.pendingChanges);
-    this.pendingChanges.clear();
+      try {
+        const affectedItems = this.findAffectedItems(changedFiles);
+        if (affectedItems.length === 0) {
+          log("watch: no affected tests for changed files:", [...changedFiles]);
+          continue;
+        }
 
-    try {
-      // Find test items that belong to changed files
-      const affectedItems = this.findAffectedItems(changedFiles);
-      if (affectedItems.length === 0) {
-        log("watch: no affected tests for changed files:", [...changedFiles]);
-        return;
+        log(
+          "watch: re-running",
+          affectedItems.length,
+          "items for",
+          changedFiles.size,
+          "changed files",
+        );
+
+        const newRequest = new vscode.TestRunRequest(
+          affectedItems,
+          this.request.exclude,
+          this.request.profile,
+        );
+        await this.executeRun(newRequest);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("watch: re-run failed:", msg);
+
+        if (this.runMode === "server" && this.client) {
+          const reconnected = await this.attemptReconnect();
+          if (!reconnected) {
+            log("watch: giving up after exhausting reconnect attempts — disposing session");
+            this.running = false;
+            this.dispose();
+            return;
+          }
+        }
+      } finally {
+        this.running = false;
       }
+    }
+  }
 
-      log("watch: re-running", affectedItems.length, "items for", changedFiles.size, "changed files");
-
-      const newRequest = new vscode.TestRunRequest(
-        affectedItems,
-        this.request.exclude,
-        this.request.profile,
-      );
-      await this.executeRun(newRequest);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log("watch: re-run failed:", msg);
-
-      // If server connection lost, try to reconnect
-      if (this.runMode === "server" && this.client) {
-        try {
-          this.client.disconnect();
-          await ensureServer(this.config, this.workspaceRoot);
-          this.client = new TrykeClient();
-          await this.client.connect(this.config.server.host, this.config.server.port);
-          log("watch: reconnected to server");
-        } catch {
-          log("watch: reconnection failed");
+  // Returns true on a successful reconnect, false if all attempts fail. On
+  // failure leaves `this.client = undefined` so the next executeRun won't
+  // try to drive a never-connected socket.
+  private async attemptReconnect(): Promise<boolean> {
+    if (this.client) {
+      this.client.disconnect();
+      this.client = undefined;
+    }
+    for (let attempt = 1; attempt <= RECONNECT_MAX_ATTEMPTS; attempt++) {
+      if (this.disposed) {
+        return false;
+      }
+      try {
+        await ensureServer(this.config, this.workspaceRoot);
+        const next = new TrykeClient();
+        await next.connect(this.config.server.host, this.config.server.port);
+        this.client = next;
+        log("watch: reconnected to server on attempt", attempt);
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("watch: reconnect attempt", attempt, "failed:", msg);
+        if (attempt < RECONNECT_MAX_ATTEMPTS) {
+          // Exponential backoff: 200ms, 400ms, 800ms.
+          const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
-    } finally {
-      this.running = false;
-
-      // Check if more changes accumulated during the run
-      if (this.pendingChanges.size > 0 && !this.disposed) {
-        await this.executePendingRun();
-      }
     }
+    return false;
   }
 
   private findAffectedItems(changedFiles: Set<string>): vscode.TestItem[] {
@@ -173,8 +212,8 @@ export class WatchSession implements vscode.Disposable {
       // Scoped watch: only re-run tests in changed files that are within the original scope
       const includeIds = new Set(originalInclude.map((i) => i.id));
       for (const [id, item] of this.getTestMap()) {
-        const filePart = id.split("::")[0];
-        if (changedFiles.has(filePart) && isInScope(id, includeIds)) {
+        const [filePart] = id.split("::");
+        if (filePart && changedFiles.has(filePart) && isInScope(id, includeIds)) {
           // Only add file-level or leaf items to avoid duplicates
           if (!id.includes("::") || item.children.size === 0) {
             items.push(item);
@@ -257,7 +296,7 @@ export class WatchSession implements vscode.Disposable {
   }
 }
 
-function isInScope(testId: string, includeIds: Set<string>): boolean {
+export function isInScope(testId: string, includeIds: Set<string>): boolean {
   // Check exact match
   if (includeIds.has(testId)) {
     return true;

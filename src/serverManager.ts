@@ -4,7 +4,33 @@ import { TrykeConfig } from "./config";
 import { log, logServer } from "./log";
 import { resolveVariables } from "./resolveVariables";
 
-let serverProcess: cp.ChildProcess | undefined;
+// State of the spawned tryke server process. Encoded as a discriminated
+// union so every transition is explicit; the previous shape was a single
+// `let serverProcess: ChildProcess | undefined` mutated from five places
+// (ensureServer, stopServer, killServerOnPort, the spawn `error` handler,
+// the spawn `exit` handler) which made races hard to reason about — e.g.
+// two `ensureServer` calls landing in the same tick both saw `undefined`
+// and both spawned.
+export type ServerState =
+  | { kind: "idle" }
+  | { kind: "starting"; proc: cp.ChildProcess; ready: Promise<void> }
+  | { kind: "running"; proc: cp.ChildProcess }
+  | { kind: "stopping"; proc: cp.ChildProcess };
+
+let state: ServerState = { kind: "idle" };
+
+function transition(next: ServerState): void {
+  log("server: state", state.kind, "→", next.kind);
+  state = next;
+}
+
+// Test-only accessors. Production callers should go through `hasActiveServer`.
+export function _getStateForTesting(): ServerState {
+  return state;
+}
+export function _setStateForTesting(next: ServerState): void {
+  state = next;
+}
 
 export async function ensureServer(
   config: TrykeConfig,
@@ -16,6 +42,14 @@ export async function ensureServer(
   if (await tryPing(config.server.host, config.server.port)) {
     log("server: reusing existing server at", endpoint);
     return;
+  }
+
+  // Concurrent ensureServer calls: piggy-back on the in-flight start
+  // rather than spawning a second process that would race the first to
+  // bind the port.
+  if (state.kind === "starting") {
+    log("server: ensureServer awaiting in-flight start");
+    return state.ready;
   }
 
   if (!config.server.autoStart) {
@@ -58,54 +92,66 @@ export async function ensureServer(
     "TRYKE_LOG=" + trykeLog,
   );
 
-  serverProcess = cp.spawn(config.command, spawnArgs, {
+  const proc = cp.spawn(config.command, spawnArgs, {
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
     cwd: workspaceRoot,
     env: { ...process.env, TRYKE_LOG: trykeLog },
   });
 
-  serverProcess.unref();
+  proc.unref();
 
-  pipeToServerChannel(serverProcess.stdout, "stdout");
-  pipeToServerChannel(serverProcess.stderr, "stderr");
+  pipeToServerChannel(proc.stdout, "stdout");
+  pipeToServerChannel(proc.stderr, "stderr");
 
-  logServer(`--- server starting: ${config.command} ${spawnArgs.join(" ")} (pid ${serverProcess.pid}) ---`);
-  log("server: spawned pid", serverProcess.pid);
+  logServer(`--- server starting: ${config.command} ${spawnArgs.join(" ")} (pid ${proc.pid}) ---`);
+  log("server: spawned pid", proc.pid);
 
-  serverProcess.on("error", (err) => {
+  proc.on("error", (err) => {
     log("server: spawn error:", err.message);
     logServer(`--- server spawn error: ${err.message} ---`);
-    serverProcess = undefined;
+    if (currentProc() === proc) {
+      transition({ kind: "idle" });
+    }
   });
 
-  serverProcess.on("exit", (code, signal) => {
+  proc.on("exit", (code, signal) => {
     log("server: exited code =", code, "signal =", signal);
     logServer(`--- server exited code=${code} signal=${signal} ---`);
-    serverProcess = undefined;
+    if (currentProc() === proc) {
+      transition({ kind: "idle" });
+    }
   });
 
-  const timeout = 10_000;
-  const interval = 200;
-  const start = Date.now();
+  const ready = waitForReady(config.server.host, config.server.port);
+  transition({ kind: "starting", proc, ready });
 
-  while (Date.now() - start < timeout) {
-    if (await tryPing(config.server.host, config.server.port)) {
-      log("server: ready after", Date.now() - start, "ms");
-      return;
+  try {
+    await ready;
+  } catch (err) {
+    if (currentProc() === proc) {
+      transition({ kind: "idle" });
     }
-    await sleep(interval);
+    throw err;
   }
 
-  log("server: timed out waiting for readiness after", timeout, "ms");
-  throw new Error("Timed out waiting for tryke server to start");
+  // The exit handler may have already moved us back to idle if the server
+  // crashed during the readiness wait. Only promote to running if we still
+  // own this proc. Read through `_getStateForTesting()` so TS doesn't
+  // narrow `state` based on the pre-await snapshot — handlers that fired
+  // during the await can have transitioned us elsewhere.
+  const after = _getStateForTesting();
+  if (after.kind === "starting" && after.proc === proc) {
+    transition({ kind: "running", proc });
+  }
 }
 
 export function stopServer(): void {
-  if (serverProcess) {
-    log("server: stopping pid", serverProcess.pid);
-    serverProcess.kill("SIGTERM");
-    serverProcess = undefined;
+  if (state.kind === "running" || state.kind === "starting") {
+    const { proc } = state;
+    log("server: stopping pid", proc.pid);
+    transition({ kind: "stopping", proc });
+    proc.kill("SIGTERM");
   }
 }
 
@@ -119,27 +165,28 @@ export function stopServer(): void {
  * dispatch.
  */
 export function hasActiveServer(): boolean {
-  return serverProcess !== undefined;
+  return state.kind === "starting" || state.kind === "running";
 }
 
 /**
  * Kill whatever (if anything) is listening on the tryke server port.
  *
- * First tries the `serverProcess` we spawned ourselves; then falls back to
- * looking the PID up with `lsof` (macOS/Linux) or `netstat`/`taskkill`
- * (Windows) so foreign / stale servers — e.g. leftovers from a previous
- * session with a different tryke binary — can be cleared without manual
- * shell gymnastics. Waits until the port is free (or the timeout expires).
+ * First tries the proc we spawned ourselves (in any active state); then
+ * falls back to looking the PID up with `lsof` (macOS/Linux) or
+ * `netstat`/`taskkill` (Windows) so foreign / stale servers — e.g.
+ * leftovers from a previous session with a different tryke binary — can be
+ * cleared without manual shell gymnastics. Waits until the port is free
+ * (or the timeout expires).
  */
 export async function killServerOnPort(
   host: string,
   port: number,
 ): Promise<void> {
-  if (serverProcess) {
-    const pid = serverProcess.pid;
-    log("server: killing tracked pid", pid);
-    serverProcess.kill("SIGTERM");
-    serverProcess = undefined;
+  const tracked = currentProc();
+  if (tracked) {
+    log("server: killing tracked pid", tracked.pid);
+    transition({ kind: "stopping", proc: tracked });
+    tracked.kill("SIGTERM");
   }
 
   const foreignPid = findPidOnPort(port);
@@ -164,6 +211,28 @@ export async function killServerOnPort(
   log("server: port", port, "still held after 5s — something else has it");
 }
 
+function currentProc(): cp.ChildProcess | undefined {
+  if (state.kind === "starting" || state.kind === "running" || state.kind === "stopping") {
+    return state.proc;
+  }
+  return undefined;
+}
+
+async function waitForReady(host: string, port: number): Promise<void> {
+  const timeout = 10_000;
+  const interval = 200;
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    if (await tryPing(host, port)) {
+      log("server: ready after", Date.now() - start, "ms");
+      return;
+    }
+    await sleep(interval);
+  }
+  log("server: timed out waiting for readiness after", timeout, "ms");
+  throw new Error("Timed out waiting for tryke server to start");
+}
+
 async function tryPing(host: string, port: number): Promise<boolean> {
   const client = new TrykeClient();
   try {
@@ -186,19 +255,46 @@ function findPidOnPort(port: number): number | null {
   return findPidOnPortUnix(port);
 }
 
+// Parses `lsof -ti tcp:<port> -sTCP:LISTEN` output: a newline-separated list
+// of PIDs (just numbers, one per line). Returns the first valid PID, or null.
+export function parsePidFromLsofOutput(out: string): number | null {
+  const trimmed = out.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const [firstLine] = trimmed.split("\n");
+  if (!firstLine) {
+    return null;
+  }
+  const pid = parseInt(firstLine, 10);
+  return Number.isFinite(pid) ? pid : null;
+}
+
+// Parses `netstat -ano` output for the LISTENING entry on the given port.
+// netstat columns vary across locales; we anchor on the trailing PID and
+// require the local-address column to contain `:<port> ` so a different port
+// number elsewhere in the table doesn't match.
+export function parsePidFromNetstatOutput(
+  out: string,
+  port: number,
+): number | null {
+  for (const line of out.split(/\r?\n/)) {
+    const match = line.match(/LISTENING\s+(\d+)\s*$/);
+    if (match && match[1] && line.includes(`:${port} `)) {
+      return parseInt(match[1], 10);
+    }
+  }
+  return null;
+}
+
 function findPidOnPortUnix(port: number): number | null {
   try {
     const out = cp
       .execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
         stdio: ["ignore", "pipe", "ignore"],
       })
-      .toString()
-      .trim();
-    if (!out) {
-      return null;
-    }
-    const pid = parseInt(out.split("\n")[0], 10);
-    return Number.isFinite(pid) ? pid : null;
+      .toString();
+    return parsePidFromLsofOutput(out);
   } catch {
     return null;
   }
@@ -211,13 +307,7 @@ function findPidOnPortWindows(port: number): number | null {
         stdio: ["ignore", "pipe", "ignore"],
       })
       .toString();
-    for (const line of out.split(/\r?\n/)) {
-      const match = line.match(/LISTENING\s+(\d+)\s*$/);
-      if (match && line.includes(`:${port} `)) {
-        return parseInt(match[1], 10);
-      }
-    }
-    return null;
+    return parsePidFromNetstatOutput(out, port);
   } catch {
     return null;
   }

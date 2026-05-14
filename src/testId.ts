@@ -1,11 +1,15 @@
 import * as path from "path";
 
+// `string | null | undefined` (and friends) because these fields map to Rust
+// `Option<T>` in tryke_types, and an Option<T> without skip_serializing_if
+// serializes None as `null` on the wire. The `??` operators below handle
+// both null and undefined identically.
 export interface TestIdInput {
   name: string;
-  file_path?: string;
+  file_path?: string | null | undefined;
   module_path: string;
-  groups?: string[];
-  case_label?: string;
+  groups?: string[] | null | undefined;
+  case_label?: string | null | undefined;
 }
 
 // Builds the canonical VS Code TestItem id for a tryke test.
@@ -23,7 +27,7 @@ export function buildTestId(test: TestIdInput, workspaceRoot: string): string {
 // function while preserving the per-case identity.
 export function splitCaseLabel(name: string): { name: string; caseLabel?: string } {
   const match = name.match(/^(.+)\[([^\]]*)\]$/);
-  if (!match) {
+  if (!match || match[1] === undefined || match[2] === undefined) {
     return { name };
   }
   return { name: match[1], caseLabel: match[2] };

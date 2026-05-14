@@ -3,8 +3,14 @@
 .vscode-test.*
 .github/**
 src/**
-out/test/**
+# Tests are compiled by tsc into out/ so vscode-test can find them. The
+# shipped extension entry point is dist/extension.js (esbuild bundle, with
+# every runtime dep inlined) so out/ doesn't need to be in the .vsix at all.
+out/**
 node_modules/**
+.pytest_cache/**
+esbuild.js
+.pre-commit-config.yaml
 .gitignore
 .yarnrc
 .eslintrc*

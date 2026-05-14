@@ -1,17 +1,38 @@
 import * as vscode from "vscode";
+import * as crypto from "crypto";
 import { TrykeConfig } from "./config";
 import { TrykeClient } from "./client";
-import { RunParams, RunStartParams, TestCompleteParams } from "./types";
+import { RunParams } from "./types";
+import {
+  RunStartParamsSchema,
+  TestCompleteParamsSchema,
+  RunCompleteParamsSchema,
+} from "./schema";
 import { reportResult } from "./resultMapper";
 import { ensureServer } from "./serverManager";
 import { buildTestId } from "./testId";
 import { log } from "./log";
 
-let runCounter = 0;
+// How long to wait for the server's `run_complete` notification after the
+// `run` RPC response has come back. The server flushes the response before
+// it broadcasts its tail of `test_complete` and `run_complete` notifications,
+// so resolving on the response alone calls `testRun.end()` before per-test
+// outcomes arrive ("did not record any output" in the panel). 2s is well
+// above any normal flush latency on a healthy connection; if it hits, the
+// server has almost certainly crashed mid-run and this is the recovery path.
+const RUN_COMPLETE_GRACE_MS = 2000;
 
 function generateRunId(): string {
-  runCounter += 1;
-  return `vscode-${process.pid}-${Date.now().toString(36)}-${runCounter}`;
+  return `vscode-${crypto.randomUUID()}`;
+}
+
+// The minimal client surface dispatchRun needs. TrykeClient implements this;
+// tests pass an in-memory fake to drive the dispatcher without a real socket.
+export interface DispatchClient {
+  onNotification(method: string, handler: (params: unknown) => void): void;
+  offNotification(method: string, handler: (params: unknown) => void): void;
+  request<T = unknown>(method: string, params?: unknown): Promise<T>;
+  disconnect(): void;
 }
 
 
@@ -37,7 +58,7 @@ export async function runServer(
 
 /** Run tests using an existing persistent client (for watch mode). */
 export async function runServerWithClient(
-  client: TrykeClient,
+  client: DispatchClient,
   request: vscode.TestRunRequest,
   testRun: vscode.TestRun,
   testMap: Map<string, vscode.TestItem>,
@@ -45,16 +66,16 @@ export async function runServerWithClient(
   workspaceRoot: string,
   token: vscode.CancellationToken,
 ): Promise<void> {
-  client.clearNotificationHandlers();
-  try {
-    await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token, false);
-  } finally {
-    client.clearNotificationHandlers();
-  }
+  // The persistent client's notification handlers are owned by `dispatchRun`
+  // — it registers a fresh set per call and removes them itself once the
+  // run is fully drained. Don't clear here: doing so would race a trailing
+  // `test_complete` that's still in flight on the wire when the previous
+  // run resolved, dropping it before the next handler set is installed.
+  await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token, false);
 }
 
-async function dispatchRun(
-  client: TrykeClient,
+export async function dispatchRun(
+  client: DispatchClient,
   request: vscode.TestRunRequest,
   testRun: vscode.TestRun,
   testMap: Map<string, vscode.TestItem>,
@@ -66,82 +87,106 @@ async function dispatchRun(
   const runId = generateRunId();
   log("server: dispatching run with run_id", runId);
 
-  return new Promise<void>((resolve, reject) => {
-    // Notifications are filtered by run_id so a concurrent run on the same
-    // server can't pollute our results.
-    client.onNotification("run_start", (params) => {
-      const { run_id, tests } = params as RunStartParams;
-      if (run_id !== runId) {
-        return;
-      }
-      if (!tests) {
-        return;
-      }
-      for (const test of tests) {
-        const testId = buildTestId(test, workspaceRoot);
-        const testItem = testMap.get(testId);
-        if (testItem) {
-          testRun.started(testItem);
-        }
-      }
-    });
-
-    client.onNotification("test_complete", (params) => {
-      const { run_id, result } = params as TestCompleteParams;
-      if (run_id !== runId) {
-        return;
-      }
-      const testId = buildTestId(result.test, workspaceRoot);
+  // Notifications are filtered by run_id so a concurrent run on the same
+  // server can't pollute our results. Save handler refs as named consts so
+  // we can offNotification them in the finally — without that, every
+  // watch-mode rerun on a persistent client would leave another set of
+  // handlers attached, and the next run would process each notification
+  // against a growing list of (mostly inert) closures.
+  const onRunStart = (params: unknown): void => {
+    const parsed = RunStartParamsSchema.safeParse(params);
+    if (!parsed.success) {
+      log("server: dropping malformed run_start:", parsed.error.message);
+      return;
+    }
+    const { run_id, tests } = parsed.data;
+    if (run_id !== runId) {
+      return;
+    }
+    for (const test of tests) {
+      const testId = buildTestId(test, workspaceRoot);
       const testItem = testMap.get(testId);
       if (testItem) {
-        reportResult(testRun, testItem, result);
+        testRun.started(testItem);
       }
-    });
+    }
+  };
 
-    // The server flushes the RPC response BEFORE its `test_complete` and
-    // `run_complete` notifications, so awaiting only the response leaves
-    // us calling testRun.end() before any per-test outcomes have arrived
-    // — the test results panel then shows "did not record any output".
-    // Wait for `run_complete` (emitted last) too, with a bounded timeout
-    // so a server that crashes before emitting it can't hang the run.
-    let runCompleteSeen = false;
-    let runCompleteResolve: (() => void) | undefined;
-    const runCompletePromise = new Promise<void>((res) => {
-      runCompleteResolve = res;
-    });
-    client.onNotification("run_complete", (params) => {
-      const { run_id } = params as { run_id?: string };
-      if (run_id !== undefined && run_id !== runId) {
-        return;
-      }
-      runCompleteSeen = true;
-      runCompleteResolve?.();
-    });
+  const onTestComplete = (params: unknown): void => {
+    const parsed = TestCompleteParamsSchema.safeParse(params);
+    if (!parsed.success) {
+      log("server: dropping malformed test_complete:", parsed.error.message);
+      return;
+    }
+    const { run_id, result } = parsed.data;
+    if (run_id !== runId) {
+      return;
+    }
+    const testId = buildTestId(result.test, workspaceRoot);
+    const testItem = testMap.get(testId);
+    if (testItem) {
+      reportResult(testRun, testItem, result, workspaceRoot);
+    }
+  };
 
-    const cancelSub = token.onCancellationRequested(() => {
-      cancelSub.dispose();
-      if (disconnectOnCancel) {
-        client.disconnect();
-      }
-      resolve();
-    });
-
-    const params = buildRunParams(request, workspaceRoot, config, runId);
-    client.request("run", params).then(async () => {
-      if (!runCompleteSeen) {
-        await Promise.race([
-          runCompletePromise,
-          new Promise<void>((res) => setTimeout(res, 2000)),
-        ]);
-      }
-      resolve();
-    }, reject);
+  // See RUN_COMPLETE_GRACE_MS at module top for why we wait at all.
+  let runCompleteSeen = false;
+  let runCompleteResolve: (() => void) | undefined;
+  const runCompletePromise = new Promise<void>((res) => {
+    runCompleteResolve = res;
   });
+  const onRunComplete = (params: unknown): void => {
+    const parsed = RunCompleteParamsSchema.safeParse(params);
+    if (!parsed.success) {
+      log("server: dropping malformed run_complete:", parsed.error.message);
+      return;
+    }
+    const { run_id } = parsed.data;
+    // Treat `null` (from a Rust Option emitted without skip) the same as
+    // `undefined` (truly absent) — both mean "untagged broadcast", which
+    // older servers and notifications without an originating run still
+    // emit. Either way: accept rather than drop on a per-run filter.
+    if (run_id != null && run_id !== runId) {
+      return;
+    }
+    runCompleteSeen = true;
+    runCompleteResolve?.();
+  };
+
+  client.onNotification("run_start", onRunStart);
+  client.onNotification("test_complete", onTestComplete);
+  client.onNotification("run_complete", onRunComplete);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const cancelSub = token.onCancellationRequested(() => {
+        cancelSub.dispose();
+        if (disconnectOnCancel) {
+          client.disconnect();
+        }
+        resolve();
+      });
+
+      const params = buildRunParams(request, config, runId);
+      client.request("run", params).then(async () => {
+        if (!runCompleteSeen) {
+          await Promise.race([
+            runCompletePromise,
+            new Promise<void>((res) => setTimeout(res, RUN_COMPLETE_GRACE_MS)),
+          ]);
+        }
+        resolve();
+      }, reject);
+    });
+  } finally {
+    client.offNotification("run_start", onRunStart);
+    client.offNotification("test_complete", onTestComplete);
+    client.offNotification("run_complete", onRunComplete);
+  }
 }
 
-function buildRunParams(
+export function buildRunParams(
   request: vscode.TestRunRequest,
-  workspaceRoot: string,
   config: TrykeConfig,
   runId: string,
 ): RunParams {
@@ -181,7 +226,7 @@ function buildRunParams(
   return params;
 }
 
-function collectLeafServerIds(item: vscode.TestItem, ids: string[]): void {
+export function collectLeafServerIds(item: vscode.TestItem, ids: string[]): void {
   if (item.children.size === 0) {
     // Strip groups: send file::name (tryke's expected ID format)
     const parts = item.id.split("::");

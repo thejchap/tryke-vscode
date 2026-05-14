@@ -26,7 +26,7 @@
     "pytest"
   ],
   "engines": {
-    "vscode": "^1.116.0"
+    "vscode": "^1.120.0"
   },
   "categories": [
     "Testing"
@@ -34,7 +34,7 @@
   "activationEvents": [
     "workspaceContains:**/pyproject.toml"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
       "title": "Tryke",
@@ -185,24 +185,32 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run bundle:prod",
     "compile": "tsc -p ./",
+    "bundle": "node esbuild.js",
+    "bundle:prod": "node esbuild.js --production",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
+    "watch:bundle": "node esbuild.js --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "pretest": "npm run compile && npm run typecheck && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
-    "package": "vsce package",
+    "package": "npm run bundle:prod && vsce package",
     "publish": "vsce publish"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "@types/vscode": "^1.118.0",
-    "@vscode/test-cli": "^0.0.12",
+    "@types/vscode": "^1.120.0",
+    "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.25.12",
     "eslint": "^10.3.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.1"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   }
 }

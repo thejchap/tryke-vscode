@@ -1,11 +1,12 @@
 import * as vscode from "vscode";
 import * as cp from "child_process";
 import { TrykeEvent } from "./types";
+import { TrykeEventSchema } from "./schema";
 import { TrykeConfig } from "./config";
 import { reportResult } from "./resultMapper";
 import { log } from "./log";
 import { resolveVariables } from "./resolveVariables";
-import { buildTestId, splitCaseLabel } from "./testId";
+import { buildTestId, splitCaseLabel, TestIdInput } from "./testId";
 
 export async function runDirect(
   request: vscode.TestRunRequest,
@@ -30,19 +31,38 @@ export async function runDirect(
     proc.stdout.on("data", (data: Buffer) => {
       buffer += data.toString();
       const lines = buffer.split("\n");
-      buffer = lines.pop()!;
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) {
           continue;
         }
+        let raw: unknown;
         try {
-          const event = JSON.parse(trimmed) as TrykeEvent;
-          log("event:", event.event, "event" in event ? JSON.stringify(event).slice(0, 300) : "");
-          handleEvent(event, testRun, testMap, workspaceRoot);
+          raw = JSON.parse(trimmed);
         } catch {
           log("non-json stdout line:", trimmed.slice(0, 200));
+          continue;
+        }
+        const parsed = TrykeEventSchema.safeParse(raw);
+        if (!parsed.success) {
+          log("dropping unexpected event shape:", parsed.error.message, "payload:", trimmed.slice(0, 200));
+          continue;
+        }
+        log("event:", parsed.data.event);
+        // handleEvent walks user-provided test items + vscode APIs; if
+        // anything throws here the unhandled error escapes the event loop
+        // and crashes the extension host. Catching it locally + killing the
+        // child lets the test run end cleanly with a logged failure.
+        try {
+          handleEvent(parsed.data, testRun, testMap, workspaceRoot);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log("handleEvent threw — killing child:", msg);
+          proc.kill("SIGTERM");
+          reject(err instanceof Error ? err : new Error(msg));
+          return;
         }
       }
     });
@@ -61,12 +81,18 @@ export async function runDirect(
     proc.on("close", (code) => {
       log("process closed with code", code);
       // Process any remaining buffer
-      if (buffer.trim()) {
+      const tail = buffer.trim();
+      if (tail) {
         try {
-          const event = JSON.parse(buffer.trim()) as TrykeEvent;
-          handleEvent(event, testRun, testMap, workspaceRoot);
-        } catch {
-          // ignore
+          const raw: unknown = JSON.parse(tail);
+          const parsed = TrykeEventSchema.safeParse(raw);
+          if (parsed.success) {
+            handleEvent(parsed.data, testRun, testMap, workspaceRoot);
+          } else {
+            log("dropping trailing buffer:", parsed.error.message);
+          }
+        } catch (err) {
+          log("trailing buffer not json:", err instanceof Error ? err.message : String(err));
         }
       }
       resolve();
@@ -97,7 +123,7 @@ function handleEvent(
       log("testMap keys:", [...testMap.keys()]);
     }
     if (testItem) {
-      reportResult(testRun, testItem, result);
+      reportResult(testRun, testItem, result, workspaceRoot);
     }
   } else if (event.event === "discovery_warning") {
     log("discovery warning:", event.warning.file_path, event.warning.kind, event.warning.message);
@@ -105,19 +131,13 @@ function handleEvent(
 }
 
 function testIdFromResult(
-  test: {
-    name: string;
-    file_path?: string;
-    module_path: string;
-    groups?: string[];
-    case_label?: string;
-  },
+  test: TestIdInput,
   workspaceRoot: string,
 ): string {
   return buildTestId(test, workspaceRoot);
 }
 
-function buildArgs(
+export function buildArgs(
   request: vscode.TestRunRequest,
   config: TrykeConfig,
   workspaceRoot: string,
@@ -169,9 +189,11 @@ function buildArgs(
         paths.add(item.id);
       } else if (item.children.size > 0) {
         // Group/namespace item: collect leaf test names
-        const filePart = item.id.split("::")[0];
-        paths.add(filePart);
-        collectLeafNames(item, names);
+        const [filePart] = item.id.split("::");
+        if (filePart) {
+          paths.add(filePart);
+          collectLeafNames(item, names);
+        }
       } else {
         // Individual test — id is "relPath::group1::...::testName[case]?"
         // Strip a `[case_label]` suffix before sending to `-k`: tryke's
@@ -181,9 +203,11 @@ function buildArgs(
         // result mapper still routes each `test_complete` to the right
         // TestItem, so the case the user clicked still gets a status.
         const parts = item.id.split("::");
-        if (parts.length >= 2) {
-          paths.add(parts[0]);
-          const { name } = splitCaseLabel(parts[parts.length - 1]);
+        const filePart = parts[0];
+        const leafPart = parts[parts.length - 1];
+        if (parts.length >= 2 && filePart && leafPart) {
+          paths.add(filePart);
+          const { name } = splitCaseLabel(leafPart);
           names.push(name);
         }
       }
@@ -206,10 +230,13 @@ function buildArgs(
   return args;
 }
 
-function collectLeafNames(item: vscode.TestItem, names: string[]): void {
+export function collectLeafNames(item: vscode.TestItem, names: string[]): void {
   if (item.children.size === 0) {
     const parts = item.id.split("::");
-    names.push(parts[parts.length - 1]);
+    const last = parts[parts.length - 1];
+    if (last) {
+      names.push(last);
+    }
   } else {
     item.children.forEach((child) => collectLeafNames(child, names));
   }

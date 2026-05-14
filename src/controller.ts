@@ -67,7 +67,7 @@ export class TrykeTestController implements vscode.Disposable {
       if (this.debounceTimer) {
         clearTimeout(this.debounceTimer);
       }
-      this.debounceTimer = setTimeout(() => this.discover(), 300);
+      this.debounceTimer = setTimeout(() => void this.discover(), 300);
     };
     this.watcher.onDidChange(onChange);
     this.watcher.onDidCreate(onChange);

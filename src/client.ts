@@ -1,8 +1,15 @@
 import * as net from "net";
-import { JsonRpcRequest, JsonRpcResponse, JsonRpcNotification } from "./types";
+import { JsonRpcRequest, JsonRpcMessage } from "./types";
+import { JsonRpcMessageSchema } from "./schema";
 import { log } from "./log";
 
 type NotificationHandler = (params: unknown) => void;
+
+// How long to wait for `socket.end()` to complete a graceful half-close
+// before falling back to `destroy()`. The peer should ack the FIN almost
+// instantly on a healthy connection; this is a backstop for cases where
+// the server is wedged or the network has half-disappeared.
+const DISCONNECT_GRACE_MS = 500;
 
 export class TrykeClient {
   private socket: net.Socket | undefined;
@@ -32,18 +39,26 @@ export class TrykeClient {
       socket.on("data", (data: Buffer) => {
         this.buffer += data.toString();
         const lines = this.buffer.split("\n");
-        this.buffer = lines.pop()!;
+        this.buffer = lines.pop() ?? "";
 
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) {
             continue;
           }
+          let raw: unknown;
           try {
-            this.handleMessage(JSON.parse(trimmed));
-          } catch {
-            // Skip malformed JSON
+            raw = JSON.parse(trimmed);
+          } catch (err) {
+            log("client: skipping malformed JSON line:", err instanceof Error ? err.message : String(err));
+            continue;
           }
+          const result = JsonRpcMessageSchema.safeParse(raw);
+          if (!result.success) {
+            log("client: dropping non-RPC message:", result.error.message, "payload:", trimmed.slice(0, 200));
+            continue;
+          }
+          this.handleMessage(result.data);
         }
       });
 
@@ -92,40 +107,72 @@ export class TrykeClient {
     handlers.push(handler);
   }
 
+  offNotification(method: string, handler: NotificationHandler): void {
+    const handlers = this.notificationHandlers.get(method);
+    if (!handlers) {
+      return;
+    }
+    const i = handlers.indexOf(handler);
+    if (i !== -1) {
+      handlers.splice(i, 1);
+    }
+    if (handlers.length === 0) {
+      this.notificationHandlers.delete(method);
+    }
+  }
+
   clearNotificationHandlers(): void {
     this.notificationHandlers.clear();
   }
 
   disconnect(): void {
-    if (this.socket) {
-      this.socket.destroy();
-      this.socket = undefined;
+    // Reject pending requests up front. The "close" event handler also
+    // rejects pending, but disconnect() returns synchronously while close
+    // fires asynchronously — without this, an awaiter racing the close
+    // event silently hangs forever.
+    for (const [, pending] of this.pending) {
+      pending.reject(new Error("Client disconnected"));
     }
     this.pending.clear();
     this.notificationHandlers.clear();
     this.buffer = "";
+
+    const socket = this.socket;
+    this.socket = undefined;
+    if (!socket) {
+      return;
+    }
+
+    // Half-close so any in-flight write gets flushed; force destroy if
+    // the peer doesn't close its side within the grace window.
+    socket.end();
+    const fallback = setTimeout(() => {
+      if (!socket.destroyed) {
+        log("client: disconnect grace expired — forcing destroy");
+        socket.destroy();
+      }
+    }, DISCONNECT_GRACE_MS);
+    socket.once("close", () => {
+      clearTimeout(fallback);
+    });
   }
 
-  private handleMessage(msg: JsonRpcResponse | JsonRpcNotification): void {
-    if ("id" in msg && msg.id != null) {
-      // Response to a request
-      const response = msg as JsonRpcResponse;
-      const pending = this.pending.get(response.id);
+  private handleMessage(msg: JsonRpcMessage): void {
+    if ("id" in msg) {
+      const pending = this.pending.get(msg.id);
       if (pending) {
-        this.pending.delete(response.id);
-        if (response.error) {
-          pending.reject(new Error(response.error.message));
+        this.pending.delete(msg.id);
+        if (msg.error) {
+          pending.reject(new Error(msg.error.message));
         } else {
-          pending.resolve(response.result);
+          pending.resolve(msg.result);
         }
       }
     } else if ("method" in msg) {
-      // Notification
-      const notification = msg as JsonRpcNotification;
-      const handlers = this.notificationHandlers.get(notification.method);
+      const handlers = this.notificationHandlers.get(msg.method);
       if (handlers) {
         for (const handler of handlers) {
-          handler(notification.params);
+          handler(msg.params);
         }
       }
     }
