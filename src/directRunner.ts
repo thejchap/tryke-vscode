@@ -123,7 +123,7 @@ function handleEvent(
       log("testMap keys:", [...testMap.keys()]);
     }
     if (testItem) {
-      reportResult(testRun, testItem, result);
+      reportResult(testRun, testItem, result, workspaceRoot);
     }
   } else if (event.event === "discovery_warning") {
     log("discovery warning:", event.warning.file_path, event.warning.kind, event.warning.message);

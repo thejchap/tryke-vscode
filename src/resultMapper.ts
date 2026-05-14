@@ -1,3 +1,4 @@
+import * as path from "path";
 import * as vscode from "vscode";
 import { TrykeTestResult, TrykeTestOutcome, TrykeDuration } from "./types";
 
@@ -26,6 +27,7 @@ export function reportResult(
   testRun: vscode.TestRun,
   testItem: vscode.TestItem,
   result: TrykeTestResult,
+  workspaceRoot: string,
 ): void {
   const ms = durationMs(result.duration);
   const outcome = result.outcome;
@@ -38,7 +40,7 @@ export function reportResult(
       break;
 
     case "failed": {
-      const messages = buildFailureMessages(outcome.detail, testItem);
+      const messages = buildFailureMessages(outcome.detail, testItem, workspaceRoot);
       testRun.failed(testItem, messages, ms);
       runLevelError = outcome.detail.traceback ?? outcome.detail.message;
       break;
@@ -97,6 +99,7 @@ export function reportResult(
 export function buildFailureMessages(
   detail: FailedDetail,
   testItem: vscode.TestItem,
+  workspaceRoot: string,
 ): vscode.TestMessage[] {
   const messages: vscode.TestMessage[] = [];
 
@@ -107,25 +110,50 @@ export function buildFailureMessages(
         assertion.expected,
         assertion.received,
       );
-      if (assertion.file) {
+      const uri = resolveAssertionUri(assertion.file, testItem, workspaceRoot);
+      if (uri) {
         msg.location = new vscode.Location(
-          vscode.Uri.file(assertion.file),
-          new vscode.Position(assertion.line - 1, 0),
-        );
-      } else if (testItem.uri) {
-        msg.location = new vscode.Location(
-          testItem.uri,
-          new vscode.Position(assertion.line - 1, 0),
+          uri,
+          new vscode.Position(Math.max(0, assertion.line - 1), 0),
         );
       }
       messages.push(msg);
     }
   } else {
-    const msg = new vscode.TestMessage(
-      detail.traceback ?? detail.message,
-    );
+    // Fallback when tryke didn't emit a structured assertion (e.g. an
+    // unstructured `assert` or a non-expect failure). Anchor to the test
+    // item itself so the message still renders inline in the editor — a
+    // location-less TestMessage only appears in the bottom panel.
+    const text = detail.traceback ?? detail.message;
+    const msg = new vscode.TestMessage(text);
+    if (testItem.uri && testItem.range) {
+      msg.location = new vscode.Location(testItem.uri, testItem.range);
+    } else if (testItem.uri) {
+      msg.location = new vscode.Location(testItem.uri, new vscode.Position(0, 0));
+    }
     messages.push(msg);
   }
 
   return messages;
+}
+
+// tryke serializes assertion.file as a path that's been made relative to
+// the worker's cwd (see tryke_runner::worker::convert_assertion). The
+// extension then receives e.g. `"src/flowby/channels.py"`, and
+// `vscode.Uri.file("src/flowby/channels.py")` produces
+// `file:///src/flowby/channels.py` — a path that doesn't exist on disk.
+// VS Code can't render an inline TestMessage at a non-existent location,
+// so the diff only appears in the bottom panel. Resolve relative paths
+// against the workspace root before constructing the URI; fall back to
+// the testItem's own URI if the field is absent.
+function resolveAssertionUri(
+  file: string | null | undefined,
+  testItem: vscode.TestItem,
+  workspaceRoot: string,
+): vscode.Uri | undefined {
+  if (file != null && file !== "") {
+    const abs = path.isAbsolute(file) ? file : path.join(workspaceRoot, file);
+    return vscode.Uri.file(abs);
+  }
+  return testItem.uri;
 }

@@ -32,6 +32,10 @@ interface OutputCall {
 }
 type Call = PassedCall | FailedCall | ErroredCall | SkippedCall | OutputCall;
 
+// Stub workspace root for tests that don't exercise relative-path resolution.
+// Tests that DO care (the "inline location" suite) override it inline.
+const WORKSPACE_ROOT = "/workspace";
+
 // Hand-rolled stub: vscode.tests.createTestController is heavy and the
 // methods we touch are all "fire-and-record" sinks. Capture every call with
 // just enough detail to assert on the shape.
@@ -138,13 +142,13 @@ function transitions(calls: Call[]): Call[] {
 suite("reportResult", () => {
   test("passed fires testRun.passed with duration", () => {
     const { run, calls } = makeStubRun();
-    reportResult(run, makeStubItem(), result({ status: "passed" }, { duration: { secs: 0, nanos: 5_000_000 } }));
+    reportResult(run, makeStubItem(), result({ status: "passed" }, { duration: { secs: 0, nanos: 5_000_000 } }), WORKSPACE_ROOT);
     assert.deepStrictEqual(transitions(calls), [{ kind: "passed", ms: 5 }]);
   });
 
   test("x_failed (expected failure that did fail) is recorded as passed", () => {
     const { run, calls } = makeStubRun();
-    reportResult(run, makeStubItem(), result({ status: "x_failed" }));
+    reportResult(run, makeStubItem(), result({ status: "x_failed" }), WORKSPACE_ROOT);
     const t = transitions(calls);
     assert.strictEqual(t.length, 1);
     assert.strictEqual(t[0]?.kind, "passed");
@@ -152,7 +156,7 @@ suite("reportResult", () => {
 
   test("x_passed (expected failure that passed) is recorded as failed", () => {
     const { run, calls } = makeStubRun();
-    reportResult(run, makeStubItem(), result({ status: "x_passed" }));
+    reportResult(run, makeStubItem(), result({ status: "x_passed" }), WORKSPACE_ROOT);
     const t = transitions(calls);
     assert.strictEqual(t.length, 1);
     const call = t[0] as FailedCall;
@@ -167,6 +171,7 @@ suite("reportResult", () => {
       run,
       makeStubItem(),
       result({ status: "error", detail: { message: "import error" } }),
+      WORKSPACE_ROOT,
     );
     const t = transitions(calls);
     assert.strictEqual(t.length, 1);
@@ -178,7 +183,7 @@ suite("reportResult", () => {
   test("skipped and todo both call testRun.skipped", () => {
     for (const status of ["skipped", "todo"] as const) {
       const { run, calls } = makeStubRun();
-      reportResult(run, makeStubItem(), result({ status }));
+      reportResult(run, makeStubItem(), result({ status }), WORKSPACE_ROOT);
       assert.deepStrictEqual(transitions(calls), [{ kind: "skipped" }]);
     }
   });
@@ -189,6 +194,7 @@ suite("reportResult", () => {
       run,
       makeStubItem(),
       result({ status: "failed", detail: { message: "boom" } }),
+      WORKSPACE_ROOT,
     );
     const t = transitions(calls);
     assert.strictEqual(t.length, 1);
@@ -201,6 +207,7 @@ suite("reportResult", () => {
       run,
       makeStubItem(),
       result({ status: "passed" }, { stdout: "a\nb", stderr: "x\ny" }),
+      WORKSPACE_ROOT,
     );
     const outputs = calls
       .filter((c): c is OutputCall => c.kind === "output")
@@ -218,6 +225,7 @@ suite("reportResult", () => {
       run,
       makeStubItem(),
       result({ status: "passed" }, { stdout: "", stderr: "" }),
+      WORKSPACE_ROOT,
     );
     // Only the run-level banner; no stdout/stderr appended.
     const outputs = calls.filter((c) => c.kind === "output");
@@ -234,7 +242,7 @@ suite("reportResult", () => {
 suite("reportResult run-level digest", () => {
   test("emits a PASS line for passed", () => {
     const { run, calls } = makeStubRun();
-    reportResult(run, makeStubItem(), result({ status: "passed" }, { duration: { secs: 0, nanos: 5_000_000 } }));
+    reportResult(run, makeStubItem(), result({ status: "passed" }, { duration: { secs: 0, nanos: 5_000_000 } }), WORKSPACE_ROOT);
     const banner = (calls[1] as OutputCall).text;
     assert.match(banner, /^PASS tests\/x\.py::t \(5\.0ms\)\r\n$/);
   });
@@ -245,6 +253,7 @@ suite("reportResult run-level digest", () => {
       run,
       makeStubItem(),
       result({ status: "failed", detail: { message: "boom\nat line 12" } }),
+      WORKSPACE_ROOT,
     );
     const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
     assert.strictEqual(outputs.length, 2, "banner + body");
@@ -258,6 +267,7 @@ suite("reportResult run-level digest", () => {
       run,
       makeStubItem(),
       result({ status: "error", detail: { message: "import error" } }),
+      WORKSPACE_ROOT,
     );
     const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
     assert.match(outputs[0]!.text, /^ERROR /);
@@ -271,7 +281,7 @@ suite("reportResult run-level digest", () => {
   ] as const) {
     test(`emits a ${banner} line for ${status}`, () => {
       const { run, calls } = makeStubRun();
-      reportResult(run, makeStubItem(), result({ status }));
+      reportResult(run, makeStubItem(), result({ status }), WORKSPACE_ROOT);
       const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
       assert.strictEqual(outputs.length, 1);
       assert.match(outputs[0]!.text, new RegExp(`^${banner} `));
@@ -280,7 +290,7 @@ suite("reportResult run-level digest", () => {
 
   test("x_passed (banner is XPASS, body explains)", () => {
     const { run, calls } = makeStubRun();
-    reportResult(run, makeStubItem(), result({ status: "x_passed" }));
+    reportResult(run, makeStubItem(), result({ status: "x_passed" }), WORKSPACE_ROOT);
     const outputs = calls.filter((c): c is OutputCall => c.kind === "output");
     assert.match(outputs[0]!.text, /^XPASS /);
     assert.match(outputs[1]!.text, /Expected to fail but passed/);
@@ -290,7 +300,7 @@ suite("reportResult run-level digest", () => {
 suite("buildFailureMessages", () => {
   test("falls back to detail.message when there are no assertions", () => {
     const detail: FailedDetail = { message: "raw failure" };
-    const messages = buildFailureMessages(detail, makeStubItem());
+    const messages = buildFailureMessages(detail, makeStubItem(), WORKSPACE_ROOT);
     assert.strictEqual(messages.length, 1);
     assert.strictEqual(messageText(messages[0]), "raw failure");
   });
@@ -300,7 +310,7 @@ suite("buildFailureMessages", () => {
       message: "short",
       traceback: "Traceback (most recent call last):\n  File ...",
     };
-    const messages = buildFailureMessages(detail, makeStubItem());
+    const messages = buildFailureMessages(detail, makeStubItem(), WORKSPACE_ROOT);
     assert.strictEqual(messages.length, 1);
     assert.match(messageText(messages[0]), /Traceback/);
   });
@@ -327,11 +337,11 @@ suite("buildFailureMessages", () => {
         },
       ],
     };
-    const messages = buildFailureMessages(detail, makeStubItem());
+    const messages = buildFailureMessages(detail, makeStubItem(), WORKSPACE_ROOT);
     assert.strictEqual(messages.length, 2);
   });
 
-  test("uses assertion.file location when present", () => {
+  test("uses assertion.file location when present (absolute path)", () => {
     const detail: FailedDetail = {
       message: "...",
       assertions: [
@@ -346,11 +356,39 @@ suite("buildFailureMessages", () => {
         },
       ],
     };
-    const messages = buildFailureMessages(detail, makeStubItem());
+    const messages = buildFailureMessages(detail, makeStubItem(), WORKSPACE_ROOT);
     const loc = messages[0]?.location;
     assert.ok(loc);
     assert.strictEqual(loc.uri.fsPath, "/abs/path/to/test.py");
     assert.strictEqual(loc.range.start.line, 6);
+  });
+
+  // tryke ships assertion.file as a path relative to the worker cwd
+  // (see tryke_runner::worker::convert_assertion). If we don't resolve
+  // against the workspace root, vscode.Uri.file("src/x.py") points at
+  // `/src/x.py` which doesn't exist — and VS Code silently refuses to
+  // render an inline TestMessage at a nonexistent file. That's the
+  // "diff in the panel but no editor squiggle" bug.
+  test("resolves a relative assertion.file against the workspace root", () => {
+    const detail: FailedDetail = {
+      message: "...",
+      assertions: [
+        {
+          expression: "e",
+          file: "src/flowby/channels.py",
+          line: 24,
+          span_offset: 0,
+          span_length: 1,
+          expected: "2",
+          received: "4",
+        },
+      ],
+    };
+    const messages = buildFailureMessages(detail, makeStubItem(), "/workspace/flowby");
+    const loc = messages[0]?.location;
+    assert.ok(loc, "inline location must be set or no editor diagnostic appears");
+    assert.strictEqual(loc.uri.fsPath, "/workspace/flowby/src/flowby/channels.py");
+    assert.strictEqual(loc.range.start.line, 23);
   });
 
   test("falls back to testItem.uri when assertion.file is missing", () => {
@@ -368,7 +406,7 @@ suite("buildFailureMessages", () => {
         },
       ],
     };
-    const messages = buildFailureMessages(detail, makeStubItem(itemUri));
+    const messages = buildFailureMessages(detail, makeStubItem(itemUri), WORKSPACE_ROOT);
     const loc = messages[0]?.location;
     assert.ok(loc);
     assert.strictEqual(loc.uri.fsPath, itemUri.fsPath);
@@ -389,7 +427,7 @@ suite("buildFailureMessages", () => {
         },
       ],
     };
-    const messages = buildFailureMessages(detail, makeStubItem());
+    const messages = buildFailureMessages(detail, makeStubItem(), WORKSPACE_ROOT);
     assert.strictEqual(messages[0]?.location, undefined);
   });
 });

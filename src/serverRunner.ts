@@ -125,7 +125,7 @@ export async function dispatchRun(
     const testId = buildTestId(result.test, workspaceRoot);
     const testItem = testMap.get(testId);
     if (testItem) {
-      reportResult(testRun, testItem, result);
+      reportResult(testRun, testItem, result, workspaceRoot);
     }
   };
 
