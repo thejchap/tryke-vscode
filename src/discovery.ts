@@ -9,10 +9,12 @@ import { resolveVariables } from "./resolveVariables";
 import { buildTestId } from "./testId";
 import { findCaseLine, findDescribeLine, clearSourceCache } from "./sourceScan";
 
+// `string | null | undefined` because both fields map to Rust `Option<T>`
+// without skip_serializing_if and arrive on the wire as `null`, not absent.
 export interface LabelInput {
   name: string;
-  display_name?: string | undefined;
-  case_label?: string | undefined;
+  display_name?: string | null | undefined;
+  case_label?: string | null | undefined;
 }
 
 // `display_name` carries the @test("name") label (e.g. "basic"), while

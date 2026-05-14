@@ -11,41 +11,51 @@
 
 import { z } from "zod";
 
+// Rust `Option<T>` without `#[serde(skip_serializing_if = "Option::is_none")]`
+// — i.e. most Option fields on the tryke side — serializes `None` as the
+// literal `null`, not as an absent key. `.optional()` only accepts absent;
+// `.nullish()` accepts both null AND absent, which is what we want for any
+// field that maps to a Rust Option regardless of skip attribute. Without
+// this, e.g. an `expect(...)` without a label arrives as `"label": null`
+// and the whole event fails validation — collect_complete then drops
+// every discovered test and the Test Explorer goes empty.
+// Consumers in this repo already handle null via `??` / truthy checks.
+
 export const TrykeExpectedAssertionSchema = z.object({
   subject: z.string(),
   matcher: z.string(),
   negated: z.boolean(),
   args: z.array(z.string()),
   line: z.number(),
-  label: z.string().optional(),
+  label: z.string().nullish(),
 });
 
 export const TrykeAssertionSchema = z.object({
   expression: z.string(),
-  file: z.string().optional(),
+  file: z.string().nullish(),
   line: z.number(),
   span_offset: z.number(),
   span_length: z.number(),
   expected: z.string(),
   received: z.string(),
-  expected_arg_span: z.tuple([z.number(), z.number()]).optional(),
+  expected_arg_span: z.tuple([z.number(), z.number()]).nullish(),
 });
 
 export const TrykeTestItemSchema = z.object({
   name: z.string(),
   module_path: z.string(),
-  file_path: z.string().optional(),
-  line_number: z.number().optional(),
-  display_name: z.string().optional(),
-  expected_assertions: z.array(TrykeExpectedAssertionSchema).optional(),
-  groups: z.array(z.string()).optional(),
-  skip: z.union([z.string(), z.boolean()]).optional(),
-  todo: z.union([z.string(), z.boolean()]).optional(),
-  xfail: z.union([z.string(), z.boolean()]).optional(),
-  tags: z.array(z.string()).optional(),
-  doctest_object: z.string().optional(),
-  case_label: z.string().optional(),
-  case_index: z.number().optional(),
+  file_path: z.string().nullish(),
+  line_number: z.number().nullish(),
+  display_name: z.string().nullish(),
+  expected_assertions: z.array(TrykeExpectedAssertionSchema).nullish(),
+  groups: z.array(z.string()).nullish(),
+  skip: z.union([z.string(), z.boolean()]).nullish(),
+  todo: z.union([z.string(), z.boolean()]).nullish(),
+  xfail: z.union([z.string(), z.boolean()]).nullish(),
+  tags: z.array(z.string()).nullish(),
+  doctest_object: z.string().nullish(),
+  case_label: z.string().nullish(),
+  case_index: z.number().nullish(),
 });
 
 export const TrykeTestOutcomeSchema = z.discriminatedUnion("status", [
@@ -54,14 +64,14 @@ export const TrykeTestOutcomeSchema = z.discriminatedUnion("status", [
     status: z.literal("failed"),
     detail: z.object({
       message: z.string(),
-      traceback: z.string().optional(),
-      assertions: z.array(TrykeAssertionSchema).optional(),
-      executed_lines: z.array(z.number()).optional(),
+      traceback: z.string().nullish(),
+      assertions: z.array(TrykeAssertionSchema).nullish(),
+      executed_lines: z.array(z.number()).nullish(),
     }),
   }),
   z.object({
     status: z.literal("skipped"),
-    detail: z.object({ reason: z.string().optional() }).optional(),
+    detail: z.object({ reason: z.string().nullish() }).nullish(),
   }),
   z.object({
     status: z.literal("error"),
@@ -69,12 +79,12 @@ export const TrykeTestOutcomeSchema = z.discriminatedUnion("status", [
   }),
   z.object({
     status: z.literal("x_failed"),
-    detail: z.object({ reason: z.string().optional() }).optional(),
+    detail: z.object({ reason: z.string().nullish() }).nullish(),
   }),
   z.object({ status: z.literal("x_passed") }),
   z.object({
     status: z.literal("todo"),
-    detail: z.object({ description: z.string().optional() }).optional(),
+    detail: z.object({ description: z.string().nullish() }).nullish(),
   }),
 ]);
 
@@ -87,8 +97,8 @@ export const TrykeTestResultSchema = z.object({
   test: TrykeTestItemSchema,
   outcome: TrykeTestOutcomeSchema,
   duration: TrykeDurationSchema,
-  stdout: z.string().optional(),
-  stderr: z.string().optional(),
+  stdout: z.string().nullish(),
+  stderr: z.string().nullish(),
 });
 
 export const TrykeChangedSelectionSummarySchema = z.object({
@@ -104,11 +114,11 @@ export const TrykeRunSummarySchema = z.object({
   xfailed: z.number(),
   todo: z.number(),
   duration: TrykeDurationSchema,
-  discovery_duration: TrykeDurationSchema.optional(),
-  test_duration: TrykeDurationSchema.optional(),
+  discovery_duration: TrykeDurationSchema.nullish(),
+  test_duration: TrykeDurationSchema.nullish(),
   file_count: z.number(),
-  start_time: z.string().optional(),
-  changed_selection: TrykeChangedSelectionSummarySchema.optional(),
+  start_time: z.string().nullish(),
+  changed_selection: TrykeChangedSelectionSummarySchema.nullish(),
 });
 
 export const TrykeDiscoveryWarningKindSchema = z.literal("dynamic_imports");
@@ -170,7 +180,7 @@ export const TestCompleteParamsSchema = z.object({
 });
 
 export const RunCompleteParamsSchema = z.object({
-  run_id: z.string().optional(),
+  run_id: z.string().nullish(),
 });
 
 export const RunResponseSchema = z.object({

@@ -170,3 +170,95 @@ suite("server notification param schemas", () => {
     }
   });
 });
+
+// Tryke's Rust types use `Option<T>` for most nullable wire fields; without
+// `#[serde(skip_serializing_if = "Option::is_none")]` those serialize as
+// the literal `null` rather than as an absent key. The schemas must accept
+// both shapes or one tryke release will silently nuke discovery again.
+suite("Rust Option<T> null tolerance", () => {
+  test("collect_complete with null label on an expected_assertion is accepted", () => {
+    // This is the exact shape that failed in the wild before — `label: null`
+    // from `expect(...)` without a label kwarg.
+    const evt = {
+      event: "collect_complete",
+      tests: [
+        {
+          name: "test_x",
+          module_path: "tests.x",
+          file_path: "tests/x.py",
+          line_number: 10,
+          display_name: null,
+          expected_assertions: [
+            {
+              subject: "x",
+              matcher: "to_equal",
+              negated: false,
+              args: ["1"],
+              line: 12,
+              label: null,
+            },
+          ],
+        },
+      ],
+    };
+    const parsed = TrykeEventSchema.safeParse(evt);
+    assert.ok(parsed.success, `should accept null label: ${(!parsed.success && parsed.error.message) || ""}`);
+  });
+
+  test("test_complete with null file/file_path/line_number/display_name on the result is accepted", () => {
+    const evt = {
+      event: "test_complete",
+      result: {
+        test: {
+          name: "test_x",
+          module_path: "tests.x",
+          file_path: null,
+          line_number: null,
+          display_name: null,
+        },
+        outcome: {
+          status: "failed",
+          detail: {
+            message: "boom",
+            traceback: null,
+            assertions: [
+              {
+                expression: "x == y",
+                file: null,
+                line: 12,
+                span_offset: 0,
+                span_length: 1,
+                expected: "1",
+                received: "2",
+              },
+            ],
+          },
+        },
+        duration: { secs: 0, nanos: 0 },
+        stdout: null,
+        stderr: null,
+      },
+    };
+    const parsed = TrykeEventSchema.safeParse(evt);
+    assert.ok(parsed.success, `should accept null fields on result: ${(!parsed.success && parsed.error.message) || ""}`);
+  });
+
+  test("skipped / x_failed / todo outcomes accept null reason / description", () => {
+    for (const outcome of [
+      { status: "skipped", detail: { reason: null } },
+      { status: "x_failed", detail: { reason: null } },
+      { status: "todo", detail: { description: null } },
+    ] as const) {
+      const evt = {
+        event: "test_complete",
+        result: {
+          test: { name: "test_x", module_path: "tests.x" },
+          outcome,
+          duration: { secs: 0, nanos: 0 },
+        },
+      };
+      const parsed = TrykeEventSchema.safeParse(evt);
+      assert.ok(parsed.success, `should accept null on ${outcome.status}`);
+    }
+  });
+});

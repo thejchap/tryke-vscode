@@ -142,7 +142,11 @@ export async function dispatchRun(
       return;
     }
     const { run_id } = parsed.data;
-    if (run_id !== undefined && run_id !== runId) {
+    // Treat `null` (from a Rust Option emitted without skip) the same as
+    // `undefined` (truly absent) — both mean "untagged broadcast", which
+    // older servers and notifications without an originating run still
+    // emit. Either way: accept rather than drop on a per-run filter.
+    if (run_id != null && run_id !== runId) {
       return;
     }
     runCompleteSeen = true;
