@@ -107,6 +107,20 @@ export class TrykeClient {
     handlers.push(handler);
   }
 
+  offNotification(method: string, handler: NotificationHandler): void {
+    const handlers = this.notificationHandlers.get(method);
+    if (!handlers) {
+      return;
+    }
+    const i = handlers.indexOf(handler);
+    if (i !== -1) {
+      handlers.splice(i, 1);
+    }
+    if (handlers.length === 0) {
+      this.notificationHandlers.delete(method);
+    }
+  }
+
   clearNotificationHandlers(): void {
     this.notificationHandlers.clear();
   }

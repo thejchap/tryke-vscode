@@ -1,6 +1,11 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
-import { buildRunParams, collectLeafServerIds } from "../serverRunner";
+import {
+  buildRunParams,
+  collectLeafServerIds,
+  dispatchRun,
+  DispatchClient,
+} from "../serverRunner";
 import type { TrykeConfig } from "../config";
 
 function defaultConfig(overrides: Partial<TrykeConfig> = {}): TrykeConfig {
@@ -101,5 +106,110 @@ suite("collectLeafServerIds", () => {
     const ids: string[] = [];
     collectLeafServerIds(leaf, ids);
     assert.deepStrictEqual(ids, ["tests/cases.py::square[zero]"]);
+  });
+});
+
+// Minimal DispatchClient that tracks attached/detached handlers so a test
+// can assert dispatchRun cleans up after itself. `request` invokes every
+// installed `run_complete` handler before resolving so dispatchRun doesn't
+// stall waiting on the broadcast — mirrors the real server's "flush
+// notifications, then respond" order from the test's perspective.
+class TrackingClient implements DispatchClient {
+  attached = new Map<string, Set<(p: unknown) => void>>();
+  onNotification(method: string, handler: (p: unknown) => void): void {
+    let s = this.attached.get(method);
+    if (!s) {
+      s = new Set();
+      this.attached.set(method, s);
+    }
+    s.add(handler);
+  }
+  offNotification(method: string, handler: (p: unknown) => void): void {
+    this.attached.get(method)?.delete(handler);
+  }
+  request<T = unknown>(_method: string, params?: unknown): Promise<T> {
+    const runId = (params as { run_id: string }).run_id;
+    for (const h of this.attached.get("run_complete") ?? []) {
+      h({ run_id: runId, summary: { passed: 0, failed: 0, skipped: 0 } });
+    }
+    return Promise.resolve(undefined as T);
+  }
+  disconnect(): void {}
+  totalAttached(): number {
+    let n = 0;
+    for (const s of this.attached.values()) {
+      n += s.size;
+    }
+    return n;
+  }
+}
+
+suite("dispatchRun handler lifecycle", () => {
+  test("removes every notification handler it registered once the run resolves", async () => {
+    const client = new TrackingClient();
+    const testMap = new Map<string, vscode.TestItem>();
+    const testRun = {
+      started: () => undefined,
+      enqueued: () => undefined,
+      passed: () => undefined,
+      failed: () => undefined,
+      errored: () => undefined,
+      skipped: () => undefined,
+      appendOutput: () => undefined,
+      end: () => undefined,
+    } as unknown as vscode.TestRun;
+    const token = new vscode.CancellationTokenSource().token;
+
+    await dispatchRun(
+      client,
+      request(),
+      testRun,
+      testMap,
+      defaultConfig(),
+      "/workspace",
+      token,
+      false,
+    );
+
+    assert.strictEqual(
+      client.totalAttached(),
+      0,
+      "dispatchRun must offNotification every handler it onNotification'd — " +
+        "otherwise a persistent client (watch mode) accumulates stale handlers per rerun",
+    );
+  });
+
+  test("removes handlers when the run is cancelled before the RPC resolves", async () => {
+    // Stub the request so it never resolves on its own — only cancellation
+    // will end the run.
+    const client = new TrackingClient();
+    client.request = <T = unknown>(): Promise<T> => new Promise<T>(() => undefined);
+
+    const tokenSource = new vscode.CancellationTokenSource();
+    const testRun = {
+      started: () => undefined,
+      enqueued: () => undefined,
+      passed: () => undefined,
+      failed: () => undefined,
+      errored: () => undefined,
+      skipped: () => undefined,
+      appendOutput: () => undefined,
+      end: () => undefined,
+    } as unknown as vscode.TestRun;
+
+    const runP = dispatchRun(
+      client,
+      request(),
+      testRun,
+      new Map(),
+      defaultConfig(),
+      "/workspace",
+      tokenSource.token,
+      false,
+    );
+    tokenSource.cancel();
+    await runP;
+
+    assert.strictEqual(client.totalAttached(), 0);
   });
 });
