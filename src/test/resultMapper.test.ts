@@ -431,3 +431,106 @@ suite("buildFailureMessages", () => {
     assert.strictEqual(messages[0]?.location, undefined);
   });
 });
+
+// Doctest failures don't ship structured assertions — tryke forwards
+// Python's raw `DocTestRunner` output as `detail.message` and we parse it
+// here. These integration tests verify the result lands as a usable
+// `TestMessage` (location pinned to the failing line, body cleaned of
+// Python internals) rather than the raw asterisks-and-traceback dump
+// that was making the editor decoration unreadable.
+suite("buildFailureMessages — doctest", () => {
+  const EXPECTED_GOT = [
+    "**********************************************************************",
+    'File "/tmp/dt_sample.py", line 3, in fn',
+    "Failed example:",
+    "    fn() + 0",
+    "Expected:",
+    "    1",
+    "Got:",
+    "    2",
+    "",
+  ].join("\n");
+
+  const EXCEPTION = [
+    "**********************************************************************",
+    'File "/tmp/dt_sample.py", line 6, in fn',
+    "Failed example:",
+    '    raise ValueError("boom")',
+    "Exception raised:",
+    "    Traceback (most recent call last):",
+    '      File "/x/doctest.py", line 1368, in __run',
+    '        exec(compile(example.source, filename, "single",',
+    '      File "<doctest fn[1]>", line 1, in <module>',
+    '        raise ValueError("boom")',
+    "    ValueError: boom",
+    "",
+  ].join("\n");
+
+  test("expected/got doctest emits a TestMessage.diff anchored to the doctest line", () => {
+    const messages = buildFailureMessages(
+      { message: EXPECTED_GOT },
+      makeStubItem(),
+      "/workspace",
+    );
+    assert.strictEqual(messages.length, 1);
+    const msg = messages[0]!;
+    // Anchored at the *failing example line*, not the test item's class
+    // definition (which is where the test item was originally created).
+    assert.strictEqual(msg.location?.uri.fsPath, "/tmp/dt_sample.py");
+    assert.strictEqual(msg.location?.range.start.line, 2); // 1-indexed line 3
+    // TestMessage.diff stores expected/got — these are the only fields
+    // VS Code's diff view reads off of the message.
+    assert.strictEqual(msg.expectedOutput, "1");
+    assert.strictEqual(msg.actualOutput, "2");
+  });
+
+  test("exception-raised doctest emits a MarkdownString with the example + summarised exception", () => {
+    const messages = buildFailureMessages(
+      { message: EXCEPTION },
+      makeStubItem(),
+      "/workspace",
+    );
+    assert.strictEqual(messages.length, 1);
+    const msg = messages[0]!;
+    assert.strictEqual(msg.location?.uri.fsPath, "/tmp/dt_sample.py");
+    assert.strictEqual(msg.location?.range.start.line, 5);
+    // Body should be the failing example + the bottom-line exception only.
+    // Python's internal `doctest.py` frame and the `<doctest fn[1]>`
+    // synthetic frame must NOT leak through.
+    const body = messageText(msg);
+    assert.match(body, /raise ValueError\("boom"\)/);
+    assert.match(body, /ValueError: boom/);
+    assert.doesNotMatch(body, /doctest\.py/);
+    assert.doesNotMatch(body, /<doctest fn\[1\]>/);
+    assert.doesNotMatch(body, /\*{40,}/);
+  });
+
+  test("multi-failure message yields one TestMessage per block", () => {
+    const messages = buildFailureMessages(
+      { message: EXPECTED_GOT + EXCEPTION },
+      makeStubItem(),
+      "/workspace",
+    );
+    assert.strictEqual(messages.length, 2);
+    assert.strictEqual(messages[0]?.location?.range.start.line, 2);
+    assert.strictEqual(messages[1]?.location?.range.start.line, 5);
+  });
+
+  test("malformed doctest-shaped input falls back gracefully (no throw)", () => {
+    // Has the asterisks header (so it passes the cheap check) but no
+    // `File "..."` line — parser yields no blocks, mapper falls back to
+    // the generic single-message branch.
+    const malformed =
+      "**********************************************************************\n" +
+      "Failed example:\n" +
+      "    fn()\n" +
+      "Garbage we don't recognise\n";
+    const messages = buildFailureMessages(
+      { message: malformed },
+      makeStubItem(),
+      "/workspace",
+    );
+    assert.strictEqual(messages.length, 1);
+    assert.match(messageText(messages[0]), /Failed example/);
+  });
+});
