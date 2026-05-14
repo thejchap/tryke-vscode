@@ -1,6 +1,11 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import { TrykeTestResult, TrykeTestOutcome, TrykeDuration } from "./types";
+import {
+  ParsedDoctestBlock,
+  looksLikeDoctestOutput,
+  parseDoctestOutput,
+} from "./doctest";
 
 type FailedDetail = Extract<TrykeTestOutcome, { status: "failed" }>["detail"];
 
@@ -42,7 +47,7 @@ export function reportResult(
     case "failed": {
       const messages = buildFailureMessages(outcome.detail, testItem, workspaceRoot);
       testRun.failed(testItem, messages, ms);
-      runLevelError = outcome.detail.traceback ?? outcome.detail.message;
+      runLevelError = summarizeFailedForDigest(outcome.detail);
       break;
     }
 
@@ -119,22 +124,105 @@ export function buildFailureMessages(
       }
       messages.push(msg);
     }
+  } else if (looksLikeDoctestOutput(detail.message)) {
+    // Python doctest output. tryke ships it as the raw multi-block text
+    // (asterisk separator, File "..." header, Failed example:, etc.) with
+    // no structured assertions[]. Parse it so the inline marker lands on
+    // the real failing line and Python's `doctest.py` internal traceback
+    // frames don't leak into the editor decoration.
+    const blocks = parseDoctestOutput(detail.message);
+    if (blocks.length > 0) {
+      for (const block of blocks) {
+        messages.push(buildDoctestMessage(block, testItem, workspaceRoot));
+      }
+    } else {
+      messages.push(buildFallbackMessage(detail, testItem));
+    }
   } else {
     // Fallback when tryke didn't emit a structured assertion (e.g. an
     // unstructured `assert` or a non-expect failure). Anchor to the test
     // item itself so the message still renders inline in the editor — a
     // location-less TestMessage only appears in the bottom panel.
-    const text = detail.traceback ?? detail.message;
-    const msg = new vscode.TestMessage(text);
-    if (testItem.uri && testItem.range) {
-      msg.location = new vscode.Location(testItem.uri, testItem.range);
-    } else if (testItem.uri) {
-      msg.location = new vscode.Location(testItem.uri, new vscode.Position(0, 0));
-    }
-    messages.push(msg);
+    messages.push(buildFallbackMessage(detail, testItem));
   }
 
   return messages;
+}
+
+// Format a `failed` detail for the run-level digest line. For doctest
+// output the raw `detail.message` is a multi-block dump with asterisk
+// separators and Python's internal `doctest.py` traceback frames; that
+// landed in the Test Results panel as a wall of text. Parse it down to
+// one `file:line  example → cause` line per failing example.
+function summarizeFailedForDigest(detail: FailedDetail): string {
+  if (looksLikeDoctestOutput(detail.message)) {
+    const blocks = parseDoctestOutput(detail.message);
+    if (blocks.length > 0) {
+      return blocks.map(summarizeDoctestBlock).join("\n");
+    }
+  }
+  return detail.traceback ?? detail.message;
+}
+
+function summarizeDoctestBlock(block: ParsedDoctestBlock): string {
+  const where = `${block.file}:${block.line}`;
+  const example = block.failedExample.split(/\r?\n/)[0] ?? block.failedExample;
+  if (block.exceptionSummary !== undefined && block.exceptionSummary !== "") {
+    return `${where}  ${example}\n  raised: ${block.exceptionSummary}`;
+  }
+  if (block.expected !== undefined && block.got !== undefined) {
+    return `${where}  ${example}\n  expected: ${oneLine(block.expected)}\n  got: ${oneLine(block.got)}`;
+  }
+  return `${where}  ${example}`;
+}
+
+function oneLine(text: string): string {
+  return text.split(/\r?\n/).join(" ⏎ ");
+}
+
+function buildFallbackMessage(
+  detail: FailedDetail,
+  testItem: vscode.TestItem,
+): vscode.TestMessage {
+  const text = detail.traceback ?? detail.message;
+  const msg = new vscode.TestMessage(text);
+  if (testItem.uri && testItem.range) {
+    msg.location = new vscode.Location(testItem.uri, testItem.range);
+  } else if (testItem.uri) {
+    msg.location = new vscode.Location(testItem.uri, new vscode.Position(0, 0));
+  }
+  return msg;
+}
+
+function buildDoctestMessage(
+  block: ParsedDoctestBlock,
+  testItem: vscode.TestItem,
+  workspaceRoot: string,
+): vscode.TestMessage {
+  let msg: vscode.TestMessage;
+  if (block.expected !== undefined && block.got !== undefined) {
+    // doctest's Expected/Got is a direct comparison — TestMessage.diff()
+    // gets us the structured diff view in the panel "for free".
+    msg = vscode.TestMessage.diff(block.failedExample, block.expected, block.got);
+  } else {
+    const body = new vscode.MarkdownString();
+    body.appendMarkdown("**Failed example:**\n\n");
+    body.appendCodeblock(block.failedExample, "python");
+    if (block.exceptionSummary !== undefined && block.exceptionSummary !== "") {
+      body.appendMarkdown("\n**Raised:**\n\n");
+      body.appendCodeblock(block.exceptionSummary, "text");
+    }
+    msg = new vscode.TestMessage(body);
+  }
+
+  const uri = resolveAssertionUri(block.file, testItem, workspaceRoot);
+  if (uri) {
+    msg.location = new vscode.Location(
+      uri,
+      new vscode.Position(Math.max(0, block.line - 1), 0),
+    );
+  }
+  return msg;
 }
 
 // tryke serializes assertion.file as a path that's been made relative to
