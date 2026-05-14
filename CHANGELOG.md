@@ -3,6 +3,19 @@
 All notable changes to the `tryke-vscode` extension are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.9] - 2026-05-13
+
+- Fix (doctest failures): parse Python's `DocTestRunner` output instead
+  of dumping it raw. The inline marker now lands on the failing `>>>`
+  source line (parsed from the `File "...", line N` header) rather than
+  the test item's class definition, and the body shows the failing
+  example + a one-line exception summary instead of leaking Python's
+  internal `doctest.py` traceback frames and the synthetic
+  `<doctest OBJECT[i]>` frame. Expected/Got mismatches now go through
+  `TestMessage.diff()` so the Test Results panel gets the structured
+  diff view. Multi-failure doctest messages produce one inline marker
+  per failing example.
+
 ## [0.0.8] - 2026-05-13
 
 - Fix: ship the extension as a single esbuild bundle. Before this, the

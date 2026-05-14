@@ -2,7 +2,7 @@
   "name": "tryke-vscode",
   "displayName": "Tryke",
   "description": "Tryke test runner integration for VS Code.",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "thejchap",
   "author": {
     "name": "Justin Chapman"
