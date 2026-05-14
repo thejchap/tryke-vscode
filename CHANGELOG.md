@@ -3,6 +3,51 @@
 All notable changes to the `tryke-vscode` extension are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.0.8] - 2026-05-13
+
+- Fix: ship the extension as a single esbuild bundle. Before this, the
+  `.vsix` excluded `node_modules`, so once `zod` was added as a runtime
+  dependency `require("zod")` threw at activate time, VS Code silently
+  swallowed the failure, and every contributed command showed up as
+  "command not found" because nothing got registered. Test discovery
+  was also a no-op for the same reason.
+- Fix (discovery): accept `null` for every Rust `Option<T>` wire field
+  (e.g. `expected_assertions[].label`, `display_name`, `file_path`,
+  `traceback`, the various `reason` / `description` fields). The
+  schemas previously demanded the field be absent; an actual run that
+  emitted `"label": null` failed validation and discovery silently
+  dropped every test in the file.
+- Fix (test results): the Test Results panel no longer reads "The
+  test run did not record any output". The reporter now emits a
+  `PASS / FAIL / SKIP / ERROR / XFAIL / XPASS / TODO` digest line per
+  result to the run-level output stream, with the failure or error
+  body indented underneath.
+- Fix (inline diagnostics): assertion diffs now render inline next to
+  the `expect(...)` call. tryke ships `Assertion.file` as a path
+  relative to the worker's cwd; the mapper was wrapping it directly
+  in `vscode.Uri.file()`, producing a URI that didn't exist on disk,
+  so VS Code dropped the inline `TestMessage`. Relative paths are
+  now resolved against the workspace root. Unstructured failures
+  (no `assertions[]`) also anchor to the test item now so they
+  render inline too.
+- Fix (server): plug a notification-handler leak on the persistent
+  watch-mode client. `runServerWithClient` had dropped the
+  surrounding `clearNotificationHandlers()` on the promise that
+  `dispatchRun` would clean up its own handlers; `dispatchRun` did
+  not. Each rerun on a persistent client left three more closures
+  attached, and the next run's notifications got processed against
+  the growing list. A targeted `offNotification(method, handler)`
+  call now removes only the handlers a given run installed, in a
+  finally block, so every resolution path (RPC settle, RPC reject,
+  cancellation) cleans up.
+- Refactor (server, lifecycle, schema validation): the server
+  lifecycle is now a state machine instead of five mutations of
+  `let serverProcess: ChildProcess | undefined`. Every shape that
+  crosses a process or socket boundary is validated through a
+  `zod` schema. The watch-mode reconnect loop is bounded with
+  exponential backoff (~200 / 400 / 800 ms) instead of unbounded
+  tail recursion.
+
 ## [0.0.7] - 2026-05-02
 
 - Fix: parametrised `@test("name").cases(...)` cases now show distinct
