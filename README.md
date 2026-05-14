@@ -1,6 +1,7 @@
 # Tryke for VS Code
 
-<img width="1240" height="595" alt="Screenshot 2026-03-07 at 23 51 37" src="https://github.com/user-attachments/assets/a2d34bf0-ab80-4a39-86d7-397396127730" />
+<img width="1456" height="556" alt="Screenshot 2026-05-13 at 22 33 40" src="https://github.com/user-attachments/assets/4beca13b-0967-4d74-978b-c98fff42be58" />
+
 
 VS Code integration for [Tryke](https://github.com/thejchap/tryke) — a fast Rust-powered test runner for Python.
 
