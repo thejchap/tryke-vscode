@@ -3,11 +3,53 @@ import * as cp from "child_process";
 import { EventEmitter } from "events";
 import { TrykeClient } from "../client";
 import {
+  buildServerArgs,
   hasActiveServer,
   stopServer,
   _getStateForTesting,
   _setStateForTesting,
 } from "../serverManager";
+import type { TrykeConfig } from "../config";
+
+function defaultConfig(overrides: Partial<TrykeConfig> = {}): TrykeConfig {
+  return {
+    command: "tryke",
+    python: null,
+    mode: "server",
+    server: { logLevel: "info" },
+    workers: null,
+    failFast: false,
+    maxfail: null,
+    dist: null,
+    markers: null,
+    changed: "off",
+    baseBranch: null,
+    args: [],
+    ...overrides,
+  };
+}
+
+suite("buildServerArgs", () => {
+  test("passes root, python, and workers to the server child", () => {
+    const args = buildServerArgs(
+      defaultConfig({
+        python: "${workspaceFolder}/.venv/bin/python",
+        workers: 2,
+      }),
+      "/workspace/proj",
+    );
+
+    assert.deepStrictEqual(args, [
+      "server",
+      "--root",
+      "/workspace/proj",
+      "--python",
+      "/workspace/proj/.venv/bin/python",
+      "--workers",
+      "2",
+    ]);
+  });
+});
 
 // A minimal stand-in for cp.ChildProcess. We only need .pid, .kill,
 // .exitCode, and event emission — and to be referentially distinct so the

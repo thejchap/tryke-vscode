@@ -65,9 +65,6 @@ function getWorkspaceRoot(): string | undefined {
 }
 
 export function deactivate() {
-  const config = getConfig();
-  if (config.server.autoStop) {
-    stopServer();
-  }
+  stopServer();
   controller = undefined;
 }

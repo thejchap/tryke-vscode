@@ -47,6 +47,20 @@ export function _setStateForTesting(next: ServerState): void {
   state = next;
 }
 
+export function buildServerArgs(
+  config: TrykeConfig,
+  workspaceRoot: string,
+): string[] {
+  const args = ["server", "--root", workspaceRoot];
+  if (config.python !== null && config.python !== "") {
+    args.push("--python", resolveVariables(config.python, workspaceRoot));
+  }
+  if (config.workers !== null) {
+    args.push("--workers", String(config.workers));
+  }
+  return args;
+}
+
 /**
  * Ensure a server child is running and return the shared client bound to
  * its stdio. The server is always a child of this extension host — stdio
@@ -68,27 +82,12 @@ export async function ensureServer(
     return state.ready;
   }
 
-  if (!config.server.autoStart) {
-    log("server: no running server and autoStart is disabled");
-    throw new Error(
-      "No tryke server is running and autoStart is disabled",
-    );
-  }
-
   // Pass `--root` AND set `cwd` to the workspace. tryke writes its discovery
   // cache to `<root>/.tryke/cache/discovery-v1.bin` and falls back to cwd
   // when `--root` isn't passed; on macOS the extension host's cwd is often
   // `/`, which is read-only, so the cache write fails and discovery has to
   // start from scratch on every server restart.
-  const spawnArgs = ["server", "--root", workspaceRoot];
-  if (config.python) {
-    // Without this, tryke uses bare `python`/`python3` from PATH, which won't
-    // have the project's tryke python package installed if the venv isn't
-    // already active in the spawning environment — workers fail to start.
-    // `resolveVariables` substitutes `${workspaceFolder}` / `${userHome}` /
-    // `${env:VAR}` so users can write a portable config value.
-    spawnArgs.push("--python", resolveVariables(config.python, workspaceRoot));
-  }
+  const spawnArgs = buildServerArgs(config, workspaceRoot);
   // Map `tryke.server.logLevel` to `TRYKE_LOG=<level>`. Unlike `RUST_LOG`,
   // this propagates to the spawned python workers too, so worker stderr
   // shows up in the same output panel as the rust runtime's logs.

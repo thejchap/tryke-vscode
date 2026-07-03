@@ -13,8 +13,6 @@ export interface TrykeConfig {
   python: string | null;
   mode: (typeof MODES)[number];
   server: {
-    autoStart: boolean;
-    autoStop: boolean;
     logLevel: LogLevel;
   };
   workers: number | null;
@@ -57,8 +55,6 @@ export function getConfig(): TrykeConfig {
     python: cfg.get<string | null>("python", null),
     mode: coerceEnum(cfg.get("mode"), MODES, "auto", "mode"),
     server: {
-      autoStart: cfg.get<boolean>("server.autoStart", true),
-      autoStop: cfg.get<boolean>("server.autoStop", true),
       logLevel: coerceEnum(
         cfg.get("server.logLevel"),
         LOG_LEVELS,

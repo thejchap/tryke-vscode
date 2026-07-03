@@ -47,10 +47,8 @@ See the [Tryke docs](https://thejchap.github.io/tryke/) for writing tests.
 | `tryke.command` | `tryke` | Path to the `tryke` executable. |
 | `tryke.python` | `null` | Python interpreter for spawned workers, passed as `--python` (requires tryke ≥ 0.0.26). Supports VS Code variables: `${workspaceFolder}`, `${workspaceFolder:NAME}`, `${userHome}`, `${env:VAR}`. Example: `${workspaceFolder}/.venv/bin/python3` (Unix) or `${workspaceFolder}/.venv/Scripts/python.exe` (Windows). When unset, tryke uses bare `python`/`python3` from `PATH`, which usually fails unless your venv is active in the spawning environment. Alternatively set `[tool.tryke] python` in `pyproject.toml`. |
 | `tryke.mode` | `auto` | Runner mode: `direct`, `server`, or `auto`. |
-| `tryke.server.autoStart` | `true` | Auto-start the server when using server mode. |
-| `tryke.server.autoStop` | `true` | Stop the server on extension deactivation. |
 | `tryke.server.logLevel` | `info` | Maps to `TRYKE_LOG=<level>` on the server child env. Surfaces both rust and python worker logs in the Tryke Server output panel on tryke versions that honor `TRYKE_LOG` (the release after 0.0.26); ignored on earlier versions. |
-| `tryke.workers` | `null` | Number of worker threads (`-j`). |
+| `tryke.workers` | `null` | Number of worker processes. Passed as `-j` in direct mode and `--workers` in server mode. |
 | `tryke.failFast` | `false` | Stop after the first failure (`--fail-fast`). |
 | `tryke.maxfail` | `null` | Stop after N failures (`--maxfail`). |
 | `tryke.dist` | `null` | Work distribution (`test`, `file`, `group`). |

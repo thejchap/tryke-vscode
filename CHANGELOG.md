@@ -3,6 +3,14 @@
 All notable changes to the `tryke-vscode` extension are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+- Fix (watch mode): pass `tryke.workers` through to the stdio server so
+  worker concurrency can be bounded during continuous runs.
+- Remove the obsolete `tryke.server.autoStart` and
+  `tryke.server.autoStop` settings. The extension owns the stdio server
+  child and now always starts it on demand and stops it on deactivation.
+
 ## [0.0.9] - 2026-05-13
 
 - Fix (doctest failures): parse Python's `DocTestRunner` output instead

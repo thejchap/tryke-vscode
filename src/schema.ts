@@ -1,4 +1,4 @@
-// Runtime schemas for everything that crosses a process or socket boundary.
+// Runtime schemas for everything that crosses a process boundary.
 //
 // Tryke evolves independently — the run_id rollout in PR #54 already broke
 // wire compat once. zod gives us schema + inferred types from one source so a
