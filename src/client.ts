@@ -21,8 +21,8 @@ export class TrykeClient {
   private readonly onEnd = (): void => this.handleClosed("server closed its output");
   private readonly onInputError = (err: Error): void => {
     // Writing to a dead child's stdin emits EPIPE asynchronously; without a
-    // listener that crashes the extension host. The output 'end'/'close'
-    // path handles the actual cleanup.
+    // listener that crashes the extension host. The output 'end'/'error'
+    // path (handleClosed) handles the actual session cleanup.
     log("client: input stream error —", err.message);
   };
   private readonly onOutputError = (err: Error): void => {

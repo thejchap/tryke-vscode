@@ -165,6 +165,13 @@ export async function dispatchRun(
         resolve();
       });
 
+      // Already cancelled before we even dispatched — don't start a
+      // server-side run the caller has already abandoned.
+      if (token.isCancellationRequested) {
+        resolve();
+        return;
+      }
+
       const params = buildRunParams(request, config, runId);
       client.request("run", params).then(async () => {
         if (!runCompleteSeen) {

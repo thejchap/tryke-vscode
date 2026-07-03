@@ -209,4 +209,39 @@ suite("dispatchRun handler lifecycle", () => {
 
     assert.strictEqual(client.totalAttached(), 0);
   });
+
+  test("does not dispatch a run when the token is already cancelled on entry", async () => {
+    const client = new TrackingClient();
+    let requests = 0;
+    client.request = <T = unknown>(): Promise<T> => {
+      requests++;
+      return new Promise<T>(() => undefined);
+    };
+
+    const tokenSource = new vscode.CancellationTokenSource();
+    tokenSource.cancel();
+    const testRun = {
+      started: () => undefined,
+      enqueued: () => undefined,
+      passed: () => undefined,
+      failed: () => undefined,
+      errored: () => undefined,
+      skipped: () => undefined,
+      appendOutput: () => undefined,
+      end: () => undefined,
+    } as unknown as vscode.TestRun;
+
+    await dispatchRun(
+      client,
+      request(),
+      testRun,
+      new Map(),
+      defaultConfig(),
+      "/workspace",
+      tokenSource.token,
+    );
+
+    assert.strictEqual(requests, 0, "no run should be sent for an already-cancelled token");
+    assert.strictEqual(client.totalAttached(), 0, "handlers must still be cleaned up");
+  });
 });

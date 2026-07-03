@@ -82,6 +82,16 @@ export async function ensureServer(
     return state.ready;
   }
 
+  // A stop is in flight (stdin half-closed, SIGTERM escalation pending).
+  // Spawning now would leave two server children alive at once, so wait
+  // for the dying child to exit before starting a fresh one. The `exit`
+  // handler transitions us to `idle`, after which we fall through and
+  // spawn below.
+  if (state.kind === "stopping") {
+    log("server: ensureServer waiting for in-flight stop to finish");
+    await waitForExit(state.proc);
+  }
+
   // Pass `--root` AND set `cwd` to the workspace. tryke writes its discovery
   // cache to `<root>/.tryke/cache/discovery-v1.bin` and falls back to cwd
   // when `--root` isn't passed; on macOS the extension host's cwd is often
@@ -194,10 +204,19 @@ export function stopServer(): void {
 export async function stopServerAndWait(): Promise<void> {
   const proc = currentProc();
   stopServer();
-  if (!proc || proc.exitCode !== null) {
-    return;
+  if (proc) {
+    await waitForExit(proc);
   }
-  await new Promise<void>((resolve) => {
+}
+
+// Resolve once `proc` has exited, or after the shutdown grace window plus
+// a margin — so a wedged child that ignores both EOF and SIGTERM can't
+// hang the caller forever.
+function waitForExit(proc: cp.ChildProcess): Promise<void> {
+  if (proc.exitCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
       log("server: pid", proc.pid, "did not exit within grace — continuing anyway");
       resolve();
