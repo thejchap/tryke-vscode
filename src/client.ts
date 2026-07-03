@@ -50,7 +50,7 @@ export class TrykeClient {
 
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (!this.input) {
-      throw new Error("Not connected");
+      throw new Error("Client is not attached to a server (no stdio session)");
     }
 
     const id = this.nextId++;

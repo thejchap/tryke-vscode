@@ -211,14 +211,22 @@ export async function stopServerAndWait(): Promise<void> {
 
 // Resolve once `proc` has exited, or after the shutdown grace window plus
 // a margin — so a wedged child that ignores both EOF and SIGTERM can't
-// hang the caller forever.
+// hang the caller forever. On timeout we SIGKILL best-effort before
+// resolving: `ensureServer` proceeds to spawn a fresh child once this
+// returns, so without the kill a server that ignored EOF *and* SIGTERM
+// would be orphaned alongside the new one.
 function waitForExit(proc: cp.ChildProcess): Promise<void> {
   if (proc.exitCode !== null) {
     return Promise.resolve();
   }
   return new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
-      log("server: pid", proc.pid, "did not exit within grace — continuing anyway");
+      log("server: pid", proc.pid, "ignored EOF and SIGTERM — sending SIGKILL");
+      try {
+        proc.kill("SIGKILL");
+      } catch (err) {
+        log("server: SIGKILL for pid", proc.pid, "failed —", err instanceof Error ? err.message : String(err));
+      }
       resolve();
     }, SHUTDOWN_GRACE_MS + 2_000);
     timeout.unref();
