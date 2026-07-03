@@ -3,7 +3,6 @@ import { getConfig } from "./config";
 import { discoverTests } from "./discovery";
 import { resolveRunner } from "./runner";
 import { runDirect } from "./directRunner";
-import { hasActiveServer } from "./serverManager";
 import { WatchSession } from "./watchSession";
 
 export class TrykeTestController implements vscode.Disposable {
@@ -51,12 +50,9 @@ export class TrykeTestController implements vscode.Disposable {
       }
       // Skip the extension-side debounce in server mode — the tryke server
       // already debounces file-change-driven re-discovery internally, so the
-      // extra 300ms wait just adds latency. Gate is: raw mode === "server",
-      // or mode === "auto" with an extension-spawned server currently live.
+      // extra 300ms wait just adds latency.
       const mode = getConfig().mode;
-      const inServerMode =
-        mode === "server" || (mode === "auto" && hasActiveServer());
-      if (inServerMode) {
+      if (mode === "server") {
         if (this.debounceTimer) {
           clearTimeout(this.debounceTimer);
           this.debounceTimer = undefined;

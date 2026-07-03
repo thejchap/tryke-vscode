@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- Remove `auto` runner mode and default `tryke.mode` to `direct`. Server
+  mode remains available as an explicit experimental opt-in.
 - Fix (watch mode): pass `tryke.workers` through to the stdio server so
   worker concurrency can be bounded during continuous runs.
 - Remove the obsolete `tryke.server.autoStart` and

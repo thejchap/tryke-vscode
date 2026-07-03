@@ -9,7 +9,7 @@ function defaultConfig(overrides: Partial<TrykeConfig> = {}): TrykeConfig {
   return {
     command: "tryke",
     python: null,
-    mode: "auto",
+    mode: "direct",
     server: { logLevel: "info" },
     workers: null,
     failFast: false,

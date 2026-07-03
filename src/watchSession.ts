@@ -4,7 +4,7 @@ import { TrykeConfig } from "./config";
 import { TrykeClient } from "./client";
 import { runDirect } from "./directRunner";
 import { runServerWithClient } from "./serverRunner";
-import { ensureServer, hasActiveServer } from "./serverManager";
+import { ensureServer } from "./serverManager";
 import { log } from "./log";
 
 type RunMode = "direct" | "server";
@@ -70,16 +70,10 @@ export class WatchSession implements vscode.Disposable {
   }
 
   private resolveMode(): RunMode {
-    if (this.config.mode === "direct") {
-      return "direct";
-    }
     if (this.config.mode === "server") {
       return "server";
     }
-    // Auto: use the server when the extension already has a live child.
-    // The stdio session is private to this extension, so there's no
-    // external server to probe for.
-    return hasActiveServer() ? "server" : "direct";
+    return "direct";
   }
 
   private onFileChanged(uri: vscode.Uri): void {
@@ -91,8 +85,7 @@ export class WatchSession implements vscode.Disposable {
 
     // Skip the extension-side debounce in server mode — the tryke server
     // already debounces watch-mode reruns internally, so the extra 500ms
-    // wait just adds latency. `runMode` is the resolved mode (auto already
-    // collapsed into direct/server in start()), so this catches auto→server.
+    // wait just adds latency.
     if (this.runMode === "server") {
       if (this.debounceTimer) {
         clearTimeout(this.debounceTimer);

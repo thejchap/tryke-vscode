@@ -56,11 +56,14 @@
           "type": "string",
           "enum": [
             "direct",
-            "server",
-            "auto"
+            "server"
           ],
-          "default": "auto",
-          "description": "Runner mode: 'direct' spawns a process per run, 'server' talks JSON-RPC over stdio to a persistent `tryke server` child process managed by the extension, 'auto' uses the server when one is already running."
+          "enumDescriptions": [
+            "Spawns a `tryke test` subprocess per run.",
+            "EXPERIMENTAL - IDE communicates with Tryke over an LSP-style client/server connection."
+          ],
+          "default": "direct",
+          "description": "Runner mode. Direct mode spawns a process per run. Server mode is experimental."
         },
         "tryke.server.logLevel": {
           "type": "string",

@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { log } from "./log";
 
-const MODES = ["direct", "server", "auto"] as const;
+const MODES = ["direct", "server"] as const;
 const CHANGED = ["off", "only", "first"] as const;
 const DIST = ["test", "file", "group"] as const;
 const LOG_LEVELS = ["off", "error", "warn", "info", "debug", "trace"] as const;
@@ -53,7 +53,7 @@ export function getConfig(): TrykeConfig {
   return {
     command: cfg.get<string>("command", "tryke"),
     python: cfg.get<string | null>("python", null),
-    mode: coerceEnum(cfg.get("mode"), MODES, "auto", "mode"),
+    mode: coerceEnum(cfg.get("mode"), MODES, "direct", "mode"),
     server: {
       logLevel: coerceEnum(
         cfg.get("server.logLevel"),
