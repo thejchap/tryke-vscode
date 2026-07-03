@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import { TrykeConfig } from "./config";
-import { TrykeClient } from "./client";
 import { runDirect } from "./directRunner";
 import { runServer } from "./serverRunner";
+import { hasActiveServer } from "./serverManager";
 
 export type RunFn = (
   request: vscode.TestRunRequest,
@@ -13,26 +13,16 @@ export type RunFn = (
   token: vscode.CancellationToken,
 ) => Promise<void>;
 
-export async function resolveRunner(config: TrykeConfig): Promise<RunFn> {
+export function resolveRunner(config: TrykeConfig): RunFn {
   switch (config.mode) {
     case "direct":
       return runDirect;
     case "server":
       return runServer;
     case "auto":
-      return (await canPingServer(config)) ? runServer : runDirect;
-  }
-}
-
-async function canPingServer(config: TrykeConfig): Promise<boolean> {
-  const client = new TrykeClient();
-  try {
-    await client.connect(config.server.host, config.server.port);
-    await client.request("ping");
-    client.disconnect();
-    return true;
-  } catch {
-    client.disconnect();
-    return false;
+      // The server's stdio session is private to this extension, so
+      // "available" now means "we already have a live child" — there is
+      // no external server to probe for anymore.
+      return hasActiveServer() ? runServer : runDirect;
   }
 }

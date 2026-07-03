@@ -26,11 +26,11 @@ See the [Tryke docs](https://thejchap.github.io/tryke/) for writing tests.
 
 - **Test Explorer integration** — discover, run, and debug Tryke tests from the VS Code sidebar.
 - **`@test.cases` parametrized tests** — each case (`square[zero]`, `square[one]`, …) appears as its own item with full fidelity.
-- **Server mode** — reuses a long-running `tryke server` process for near-instant reruns. The extension auto-starts and manages its lifecycle.
+- **Server mode** — reuses a long-running `tryke server` child process for near-instant reruns, speaking JSON-RPC over its stdio (LSP-style). The extension spawns it and manages its lifecycle.
 - **Direct mode** — falls back to spawning `tryke test` per run when a server isn't available.
 - **Watch mode session** — streams results from `tryke` as files change.
 - **Changed-files runs** — optionally limit runs to tests affected by your git diff.
-- **Dedicated output channels** — `Tryke` for extension activity, `Tryke Server` for piped server stdout/stderr.
+- **Dedicated output channels** — `Tryke` for extension activity, `Tryke Server` for piped server logs (stderr; stdout carries the RPC session).
 
 ## Commands
 
@@ -47,8 +47,6 @@ See the [Tryke docs](https://thejchap.github.io/tryke/) for writing tests.
 | `tryke.command` | `tryke` | Path to the `tryke` executable. |
 | `tryke.python` | `null` | Python interpreter for spawned workers, passed as `--python` (requires tryke ≥ 0.0.26). Supports VS Code variables: `${workspaceFolder}`, `${workspaceFolder:NAME}`, `${userHome}`, `${env:VAR}`. Example: `${workspaceFolder}/.venv/bin/python3` (Unix) or `${workspaceFolder}/.venv/Scripts/python.exe` (Windows). When unset, tryke uses bare `python`/`python3` from `PATH`, which usually fails unless your venv is active in the spawning environment. Alternatively set `[tool.tryke] python` in `pyproject.toml`. |
 | `tryke.mode` | `auto` | Runner mode: `direct`, `server`, or `auto`. |
-| `tryke.server.host` | `127.0.0.1` | Tryke server host. |
-| `tryke.server.port` | `2337` | Tryke server port. |
 | `tryke.server.autoStart` | `true` | Auto-start the server when using server mode. |
 | `tryke.server.autoStop` | `true` | Stop the server on extension deactivation. |
 | `tryke.server.logLevel` | `info` | Maps to `TRYKE_LOG=<level>` on the server child env. Surfaces both rust and python worker logs in the Tryke Server output panel on tryke versions that honor `TRYKE_LOG` (the release after 0.0.26); ignored on earlier versions. |

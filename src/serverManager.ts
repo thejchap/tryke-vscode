@@ -4,17 +4,32 @@ import { TrykeConfig } from "./config";
 import { log, logServer } from "./log";
 import { resolveVariables } from "./resolveVariables";
 
-// State of the spawned tryke server process. Encoded as a discriminated
-// union so every transition is explicit; the previous shape was a single
-// `let serverProcess: ChildProcess | undefined` mutated from five places
-// (ensureServer, stopServer, killServerOnPort, the spawn `error` handler,
-// the spawn `exit` handler) which made races hard to reason about — e.g.
-// two `ensureServer` calls landing in the same tick both saw `undefined`
-// and both spawned.
+// How long to wait for the initial `ping` response after spawning. The
+// server answers only after its worker pool is warm and initial discovery
+// has run, which can take a while on a cold interpreter / large project.
+const READY_TIMEOUT_MS = 30_000;
+
+// After asking the server to exit (EOF on its stdin), how long to wait for
+// a voluntary exit before escalating to SIGTERM.
+const SHUTDOWN_GRACE_MS = 3_000;
+
+// State of the spawned tryke server process. The server speaks JSON-RPC
+// over its own stdio, so the process and the client are one unit: exactly
+// one session exists per server, owned here and shared by every runner.
+// Encoded as a discriminated union so every transition is explicit; the
+// previous shape was a single `let serverProcess: ChildProcess | undefined`
+// mutated from several places, which made races hard to reason about —
+// e.g. two `ensureServer` calls landing in the same tick both saw
+// `undefined` and both spawned.
 export type ServerState =
   | { kind: "idle" }
-  | { kind: "starting"; proc: cp.ChildProcess; ready: Promise<void> }
-  | { kind: "running"; proc: cp.ChildProcess }
+  | {
+      kind: "starting";
+      proc: cp.ChildProcess;
+      client: TrykeClient;
+      ready: Promise<TrykeClient>;
+    }
+  | { kind: "running"; proc: cp.ChildProcess; client: TrykeClient }
   | { kind: "stopping"; proc: cp.ChildProcess };
 
 let state: ServerState = { kind: "idle" };
@@ -32,30 +47,31 @@ export function _setStateForTesting(next: ServerState): void {
   state = next;
 }
 
+/**
+ * Ensure a server child is running and return the shared client bound to
+ * its stdio. The server is always a child of this extension host — stdio
+ * is a single private session, so there is no such thing as attaching to
+ * a foreign server anymore.
+ */
 export async function ensureServer(
   config: TrykeConfig,
   workspaceRoot: string,
-): Promise<void> {
-  const endpoint = `${config.server.host}:${config.server.port}`;
-  log("server: ensureServer at", endpoint);
-
-  if (await tryPing(config.server.host, config.server.port)) {
-    log("server: reusing existing server at", endpoint);
-    return;
+): Promise<TrykeClient> {
+  if (state.kind === "running") {
+    return state.client;
   }
 
   // Concurrent ensureServer calls: piggy-back on the in-flight start
-  // rather than spawning a second process that would race the first to
-  // bind the port.
+  // rather than spawning a second process.
   if (state.kind === "starting") {
     log("server: ensureServer awaiting in-flight start");
     return state.ready;
   }
 
   if (!config.server.autoStart) {
-    log("server: no existing server at", endpoint, "and autoStart is disabled");
+    log("server: no running server and autoStart is disabled");
     throw new Error(
-      `Cannot connect to tryke server at ${endpoint} and autoStart is disabled`,
+      "No tryke server is running and autoStart is disabled",
     );
   }
 
@@ -64,13 +80,7 @@ export async function ensureServer(
   // when `--root` isn't passed; on macOS the extension host's cwd is often
   // `/`, which is read-only, so the cache write fails and discovery has to
   // start from scratch on every server restart.
-  const spawnArgs = [
-    "server",
-    "--port",
-    String(config.server.port),
-    "--root",
-    workspaceRoot,
-  ];
+  const spawnArgs = ["server", "--root", workspaceRoot];
   if (config.python) {
     // Without this, tryke uses bare `python`/`python3` from PATH, which won't
     // have the project's tryke python package installed if the venv isn't
@@ -92,25 +102,27 @@ export async function ensureServer(
     "TRYKE_LOG=" + trykeLog,
   );
 
+  // stdin/stdout are the RPC session — the extension owns them for the
+  // life of the process. Only stderr carries human-readable logs now.
   const proc = cp.spawn(config.command, spawnArgs, {
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
     cwd: workspaceRoot,
     env: { ...process.env, TRYKE_LOG: trykeLog },
   });
 
-  proc.unref();
-
-  pipeToServerChannel(proc.stdout, "stdout");
-  pipeToServerChannel(proc.stderr, "stderr");
+  pipeToServerChannel(proc.stderr);
 
   logServer(`--- server starting: ${config.command} ${spawnArgs.join(" ")} (pid ${proc.pid}) ---`);
   log("server: spawned pid", proc.pid);
+
+  const client = new TrykeClient();
+  client.attach(proc.stdin, proc.stdout);
 
   proc.on("error", (err) => {
     log("server: spawn error:", err.message);
     logServer(`--- server spawn error: ${err.message} ---`);
     if (currentProc() === proc) {
+      client.disconnect();
       transition({ kind: "idle" });
     }
   });
@@ -118,13 +130,15 @@ export async function ensureServer(
   proc.on("exit", (code, signal) => {
     log("server: exited code =", code, "signal =", signal);
     logServer(`--- server exited code=${code} signal=${signal} ---`);
+    // Reject anything still in flight — the session died with the process.
+    client.disconnect();
     if (currentProc() === proc) {
       transition({ kind: "idle" });
     }
   });
 
-  const ready = waitForReady(config.server.host, config.server.port);
-  transition({ kind: "starting", proc, ready });
+  const ready = waitForReady(client);
+  transition({ kind: "starting", proc, client, ready });
 
   try {
     await ready;
@@ -132,6 +146,7 @@ export async function ensureServer(
     if (currentProc() === proc) {
       transition({ kind: "idle" });
     }
+    proc.kill("SIGTERM");
     throw err;
   }
 
@@ -142,73 +157,68 @@ export async function ensureServer(
   // during the await can have transitioned us elsewhere.
   const after = _getStateForTesting();
   if (after.kind === "starting" && after.proc === proc) {
-    transition({ kind: "running", proc });
+    transition({ kind: "running", proc, client });
+  }
+  return client;
+}
+
+/**
+ * Ask the server to shut down. EOF on its stdin is the protocol's
+ * shutdown signal; SIGTERM is the escalation for a server that doesn't
+ * exit within the grace window.
+ */
+export function stopServer(): void {
+  if (state.kind === "running" || state.kind === "starting") {
+    const { proc, client } = state;
+    log("server: stopping pid", proc.pid);
+    transition({ kind: "stopping", proc });
+    // disconnect() half-closes the server's stdin — the LSP-style
+    // shutdown signal — after flushing any queued frame.
+    client.disconnect();
+    const escalate = setTimeout(() => {
+      if (proc.exitCode === null && !proc.killed) {
+        log("server: pid", proc.pid, "still alive after EOF — sending SIGTERM");
+        proc.kill("SIGTERM");
+      }
+    }, SHUTDOWN_GRACE_MS);
+    // Don't let the escalation timer hold the process open.
+    escalate.unref();
+    proc.once("exit", () => clearTimeout(escalate));
   }
 }
 
-export function stopServer(): void {
-  if (state.kind === "running" || state.kind === "starting") {
-    const { proc } = state;
-    log("server: stopping pid", proc.pid);
-    transition({ kind: "stopping", proc });
-    proc.kill("SIGTERM");
+/**
+ * Stop the server and resolve once the process has actually exited (or
+ * the wait times out). Used by the stop/restart commands so a follow-up
+ * `ensureServer` doesn't race the dying process.
+ */
+export async function stopServerAndWait(): Promise<void> {
+  const proc = currentProc();
+  stopServer();
+  if (!proc || proc.exitCode !== null) {
+    return;
   }
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => {
+      log("server: pid", proc.pid, "did not exit within grace — continuing anyway");
+      resolve();
+    }, SHUTDOWN_GRACE_MS + 2_000);
+    timeout.unref();
+    proc.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
 }
 
 /**
  * True iff the extension currently tracks a live server child process.
  *
- * This only catches servers spawned by *this* extension instance — it does
- * not detect a foreign server (e.g. one started by `tryke server` in a
- * terminal). It is good enough for "are we in server mode right now?"
- * gating where the worst case of a false negative is one extra debounced
- * dispatch.
+ * With the stdio transport the extension is the only possible client, so
+ * this is authoritative — there is no foreign-server case anymore.
  */
 export function hasActiveServer(): boolean {
   return state.kind === "starting" || state.kind === "running";
-}
-
-/**
- * Kill whatever (if anything) is listening on the tryke server port.
- *
- * First tries the proc we spawned ourselves (in any active state); then
- * falls back to looking the PID up with `lsof` (macOS/Linux) or
- * `netstat`/`taskkill` (Windows) so foreign / stale servers — e.g.
- * leftovers from a previous session with a different tryke binary — can be
- * cleared without manual shell gymnastics. Waits until the port is free
- * (or the timeout expires).
- */
-export async function killServerOnPort(
-  host: string,
-  port: number,
-): Promise<void> {
-  const tracked = currentProc();
-  if (tracked) {
-    log("server: killing tracked pid", tracked.pid);
-    transition({ kind: "stopping", proc: tracked });
-    tracked.kill("SIGTERM");
-  }
-
-  const foreignPid = findPidOnPort(port);
-  if (foreignPid !== null) {
-    log("server: killing foreign pid", foreignPid, "on port", port);
-    try {
-      process.kill(foreignPid, "SIGTERM");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log("server: failed to SIGTERM pid", foreignPid, "—", msg);
-    }
-  }
-
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (!(await tryPing(host, port))) {
-      log("server: port", port, "is free");
-      return;
-    }
-    await sleep(150);
-  }
-  log("server: port", port, "still held after 5s — something else has it");
 }
 
 function currentProc(): cp.ChildProcess | undefined {
@@ -218,109 +228,31 @@ function currentProc(): cp.ChildProcess | undefined {
   return undefined;
 }
 
-async function waitForReady(host: string, port: number): Promise<void> {
-  const timeout = 10_000;
-  const interval = 200;
+// A single `ping` request doubles as the readiness probe: the server
+// reads requests as soon as it starts but only responds once its worker
+// pool is warm and initial discovery has completed, so the response IS
+// the ready signal — no polling loop needed on a same-process pipe.
+async function waitForReady(client: TrykeClient): Promise<TrykeClient> {
   const start = Date.now();
-  while (Date.now() - start < timeout) {
-    if (await tryPing(host, port)) {
-      log("server: ready after", Date.now() - start, "ms");
-      return;
-    }
-    await sleep(interval);
-  }
-  log("server: timed out waiting for readiness after", timeout, "ms");
-  throw new Error("Timed out waiting for tryke server to start");
-}
-
-async function tryPing(host: string, port: number): Promise<boolean> {
-  const client = new TrykeClient();
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    const t = setTimeout(
+      () => reject(new Error("Timed out waiting for tryke server to start")),
+      READY_TIMEOUT_MS,
+    );
+    t.unref();
+    timer = t;
+  });
   try {
-    await client.connect(host, port);
-    await client.request("ping");
-    client.disconnect();
-    return true;
-  } catch (err) {
-    client.disconnect();
-    const msg = err instanceof Error ? err.message : String(err);
-    log("server: ping failed for", `${host}:${port}`, "—", msg);
-    return false;
+    await Promise.race([client.request("ping"), timeout]);
+    log("server: ready after", Date.now() - start, "ms");
+    return client;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-function findPidOnPort(port: number): number | null {
-  if (process.platform === "win32") {
-    return findPidOnPortWindows(port);
-  }
-  return findPidOnPortUnix(port);
-}
-
-// Parses `lsof -ti tcp:<port> -sTCP:LISTEN` output: a newline-separated list
-// of PIDs (just numbers, one per line). Returns the first valid PID, or null.
-export function parsePidFromLsofOutput(out: string): number | null {
-  const trimmed = out.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const [firstLine] = trimmed.split("\n");
-  if (!firstLine) {
-    return null;
-  }
-  const pid = parseInt(firstLine, 10);
-  return Number.isFinite(pid) ? pid : null;
-}
-
-// Parses `netstat -ano` output for the LISTENING entry on the given port.
-// netstat columns vary across locales; we anchor on the trailing PID and
-// require the local-address column to contain `:<port> ` so a different port
-// number elsewhere in the table doesn't match.
-export function parsePidFromNetstatOutput(
-  out: string,
-  port: number,
-): number | null {
-  for (const line of out.split(/\r?\n/)) {
-    const match = line.match(/LISTENING\s+(\d+)\s*$/);
-    if (match && match[1] && line.includes(`:${port} `)) {
-      return parseInt(match[1], 10);
-    }
-  }
-  return null;
-}
-
-function findPidOnPortUnix(port: number): number | null {
-  try {
-    const out = cp
-      .execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-      .toString();
-    return parsePidFromLsofOutput(out);
-  } catch {
-    return null;
-  }
-}
-
-function findPidOnPortWindows(port: number): number | null {
-  try {
-    const out = cp
-      .execFileSync("netstat", ["-ano"], {
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-      .toString();
-    return parsePidFromNetstatOutput(out, port);
-  } catch {
-    return null;
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function pipeToServerChannel(
-  stream: NodeJS.ReadableStream | null,
-  label: "stdout" | "stderr",
-): void {
+function pipeToServerChannel(stream: NodeJS.ReadableStream | null): void {
   if (!stream) {
     return;
   }
@@ -331,12 +263,12 @@ function pipeToServerChannel(
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      logServer(label === "stderr" ? `[stderr] ${line}` : line);
+      logServer(line);
     }
   });
   stream.on("end", () => {
     if (buffer.length > 0) {
-      logServer(label === "stderr" ? `[stderr] ${buffer}` : buffer);
+      logServer(buffer);
       buffer = "";
     }
   });

@@ -60,17 +60,7 @@
             "auto"
           ],
           "default": "auto",
-          "description": "Runner mode: 'direct' spawns a process per run, 'server' connects via TCP, 'auto' uses server if available."
-        },
-        "tryke.server.host": {
-          "type": "string",
-          "default": "127.0.0.1",
-          "description": "Tryke server host address."
-        },
-        "tryke.server.port": {
-          "type": "number",
-          "default": 2337,
-          "description": "Tryke server port."
+          "description": "Runner mode: 'direct' spawns a process per run, 'server' talks JSON-RPC over stdio to a persistent `tryke server` child process managed by the extension, 'auto' uses the server when one is already running."
         },
         "tryke.server.autoStart": {
           "type": "boolean",

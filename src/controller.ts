@@ -144,7 +144,7 @@ export class TrykeTestController implements vscode.Disposable {
     }
 
     try {
-      const runner = await resolveRunner(config);
+      const runner = resolveRunner(config);
       await runner(request, testRun, this.testMap, config, workspaceRoot, token);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

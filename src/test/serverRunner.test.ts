@@ -13,7 +13,7 @@ function defaultConfig(overrides: Partial<TrykeConfig> = {}): TrykeConfig {
     command: "tryke",
     python: null,
     mode: "auto",
-    server: { host: "127.0.0.1", port: 2337, autoStart: true, autoStop: true, logLevel: "info" },
+    server: { autoStart: true, autoStop: true, logLevel: "info" },
     workers: null,
     failFast: false,
     maxfail: null,
@@ -134,7 +134,6 @@ class TrackingClient implements DispatchClient {
     }
     return Promise.resolve(undefined as T);
   }
-  disconnect(): void {}
   totalAttached(): number {
     let n = 0;
     for (const s of this.attached.values()) {
@@ -168,7 +167,6 @@ suite("dispatchRun handler lifecycle", () => {
       defaultConfig(),
       "/workspace",
       token,
-      false,
     );
 
     assert.strictEqual(
@@ -205,7 +203,6 @@ suite("dispatchRun handler lifecycle", () => {
       defaultConfig(),
       "/workspace",
       tokenSource.token,
-      false,
     );
     tokenSource.cancel();
     await runP;

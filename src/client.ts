@@ -1,83 +1,55 @@
-import * as net from "net";
+import { Readable, Writable } from "stream";
 import { JsonRpcRequest, JsonRpcMessage } from "./types";
 import { JsonRpcMessageSchema } from "./schema";
 import { log } from "./log";
 
 type NotificationHandler = (params: unknown) => void;
 
-// How long to wait for `socket.end()` to complete a graceful half-close
-// before falling back to `destroy()`. The peer should ack the FIN almost
-// instantly on a healthy connection; this is a backstop for cases where
-// the server is wedged or the network has half-disappeared.
-const DISCONNECT_GRACE_MS = 500;
-
+// Speaks newline-delimited JSON-RPC 2.0 over a spawned `tryke server`
+// child's stdio, LSP-style: requests and notifications go down the child's
+// stdin, responses and broadcast notifications come back on its stdout.
+// The transport is a single session per server process — there is no
+// reconnect; when the streams close the server is gone.
 export class TrykeClient {
-  private socket: net.Socket | undefined;
+  private input: Writable | undefined;
+  private output: Readable | undefined;
   private nextId = 1;
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>();
   private notificationHandlers = new Map<string, NotificationHandler[]>();
   private buffer = "";
+  private readonly onData = (data: Buffer | string): void => this.handleData(data.toString());
+  private readonly onEnd = (): void => this.handleClosed("server closed its output");
+  private readonly onInputError = (err: Error): void => {
+    // Writing to a dead child's stdin emits EPIPE asynchronously; without a
+    // listener that crashes the extension host. The output 'end'/'close'
+    // path handles the actual cleanup.
+    log("client: input stream error —", err.message);
+  };
+  private readonly onOutputError = (err: Error): void => {
+    log("client: output stream error —", err.message);
+    this.handleClosed(`server output errored: ${err.message}`);
+  };
 
-  async connect(host: string, port: number): Promise<void> {
-    const endpoint = `${host}:${port}`;
-    return new Promise((resolve, reject) => {
-      const socket = net.createConnection({ host, port }, () => {
-        this.socket = socket;
-        log("client: connected to", endpoint);
-        resolve();
-      });
-
-      socket.on("error", (err) => {
-        if (!this.socket) {
-          log("client: connect error to", endpoint, "—", err.message);
-          reject(err);
-        } else {
-          log("client: socket error on", endpoint, "—", err.message);
-        }
-      });
-
-      socket.on("data", (data: Buffer) => {
-        this.buffer += data.toString();
-        const lines = this.buffer.split("\n");
-        this.buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) {
-            continue;
-          }
-          let raw: unknown;
-          try {
-            raw = JSON.parse(trimmed);
-          } catch (err) {
-            log("client: skipping malformed JSON line:", err instanceof Error ? err.message : String(err));
-            continue;
-          }
-          const result = JsonRpcMessageSchema.safeParse(raw);
-          if (!result.success) {
-            log("client: dropping non-RPC message:", result.error.message, "payload:", trimmed.slice(0, 200));
-            continue;
-          }
-          this.handleMessage(result.data);
-        }
-      });
-
-      socket.on("close", () => {
-        if (this.socket) {
-          log("client: connection to", endpoint, "closed with", this.pending.size, "pending request(s)");
-        }
-        // Reject all pending requests
-        for (const [, pending] of this.pending) {
-          pending.reject(new Error("Connection closed"));
-        }
-        this.pending.clear();
-        this.socket = undefined;
-      });
-    });
+  /**
+   * Bind this client to the server child's stdio: `input` is the child's
+   * stdin (we write requests to it), `output` is the child's stdout (we
+   * read responses and notifications from it).
+   */
+  attach(input: Writable, output: Readable): void {
+    if (this.input || this.output) {
+      throw new Error("Client is already attached");
+    }
+    this.input = input;
+    this.output = output;
+    input.on("error", this.onInputError);
+    output.on("data", this.onData);
+    output.on("end", this.onEnd);
+    output.on("error", this.onOutputError);
+    log("client: attached to server stdio");
   }
 
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
-    if (!this.socket) {
+    if (!this.input) {
       throw new Error("Not connected");
     }
 
@@ -94,7 +66,7 @@ export class TrykeClient {
         resolve: resolve as (value: unknown) => void,
         reject,
       });
-      this.socket!.write(JSON.stringify(msg) + "\n");
+      this.input!.write(JSON.stringify(msg) + "\n");
     });
   }
 
@@ -125,11 +97,15 @@ export class TrykeClient {
     this.notificationHandlers.clear();
   }
 
+  /**
+   * Tear the session down: reject anything still pending, detach from the
+   * streams, and half-close the server's stdin. EOF on stdin is the
+   * server's LSP-style shutdown signal, so this is also how the server is
+   * asked to exit; `end()` flushes any queued write first.
+   */
   disconnect(): void {
-    // Reject pending requests up front. The "close" event handler also
-    // rejects pending, but disconnect() returns synchronously while close
-    // fires asynchronously — without this, an awaiter racing the close
-    // event silently hangs forever.
+    // Reject pending requests up front so awaiters see a synchronous,
+    // deterministic failure instead of racing the stream teardown.
     for (const [, pending] of this.pending) {
       pending.reject(new Error("Client disconnected"));
     }
@@ -137,24 +113,59 @@ export class TrykeClient {
     this.notificationHandlers.clear();
     this.buffer = "";
 
-    const socket = this.socket;
-    this.socket = undefined;
-    if (!socket) {
+    const input = this.input;
+    const output = this.output;
+    this.input = undefined;
+    this.output = undefined;
+    if (output) {
+      output.off("data", this.onData);
+      output.off("end", this.onEnd);
+      output.off("error", this.onOutputError);
+    }
+    if (input && !input.destroyed) {
+      // Leave the error listener on: a write queued before disconnect can
+      // still surface an async EPIPE after we let go.
+      input.end();
+    }
+  }
+
+  private handleData(chunk: string): void {
+    this.buffer += chunk;
+    const lines = this.buffer.split("\n");
+    this.buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(trimmed);
+      } catch (err) {
+        log("client: skipping malformed JSON line:", err instanceof Error ? err.message : String(err));
+        continue;
+      }
+      const result = JsonRpcMessageSchema.safeParse(raw);
+      if (!result.success) {
+        log("client: dropping non-RPC message:", result.error.message, "payload:", trimmed.slice(0, 200));
+        continue;
+      }
+      this.handleMessage(result.data);
+    }
+  }
+
+  private handleClosed(reason: string): void {
+    if (!this.output) {
       return;
     }
-
-    // Half-close so any in-flight write gets flushed; force destroy if
-    // the peer doesn't close its side within the grace window.
-    socket.end();
-    const fallback = setTimeout(() => {
-      if (!socket.destroyed) {
-        log("client: disconnect grace expired — forcing destroy");
-        socket.destroy();
-      }
-    }, DISCONNECT_GRACE_MS);
-    socket.once("close", () => {
-      clearTimeout(fallback);
-    });
+    log("client: session closed (" + reason + ") with", this.pending.size, "pending request(s)");
+    for (const [, pending] of this.pending) {
+      pending.reject(new Error("Connection closed"));
+    }
+    this.pending.clear();
+    this.input = undefined;
+    this.output = undefined;
   }
 
   private handleMessage(msg: JsonRpcMessage): void {
