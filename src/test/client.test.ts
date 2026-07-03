@@ -86,6 +86,23 @@ suite("TrykeClient over stdio streams", () => {
 
     await assert.rejects(reqPromise, /closed/i);
   });
+
+  test("clears notification handlers and detaches listeners when the server dies (EOF)", async () => {
+    const { client, output } = attachedClient();
+    let calls = 0;
+    client.onNotification("run_complete", () => calls++);
+
+    // Server dies without a graceful disconnect() from serverManager.
+    output.end();
+    await tick();
+
+    // A late frame arriving on the (now-detached) stream must not reach a
+    // stale handler — the closed session should have dropped them all.
+    output.write('{"jsonrpc":"2.0","method":"run_complete","params":{}}\n');
+    await tick();
+
+    assert.strictEqual(calls, 0, "handlers must be cleared once the session closes");
+  });
 });
 
 suite("TrykeClient.disconnect", () => {

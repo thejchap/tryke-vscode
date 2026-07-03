@@ -156,14 +156,26 @@ export class TrykeClient {
   }
 
   private handleClosed(reason: string): void {
-    if (!this.output) {
+    const output = this.output;
+    if (!output) {
       return;
     }
     log("client: session closed (" + reason + ") with", this.pending.size, "pending request(s)");
+    // Mirror disconnect()'s teardown (minus the input.end() — the peer is
+    // already gone): reject pending, drop handlers/buffer, and detach our
+    // stream listeners so a dead server doesn't keep this client alive.
     for (const [, pending] of this.pending) {
       pending.reject(new Error("Connection closed"));
     }
     this.pending.clear();
+    this.notificationHandlers.clear();
+    this.buffer = "";
+    output.off("data", this.onData);
+    output.off("end", this.onEnd);
+    output.off("error", this.onOutputError);
+    // Leave the input error listener attached (as disconnect does) so a
+    // write already queued on the now-dead pipe can still surface its
+    // async EPIPE without crashing the extension host.
     this.input = undefined;
     this.output = undefined;
   }

@@ -150,14 +150,18 @@ export async function dispatchRun(
   client.onNotification("test_complete", onTestComplete);
   client.onNotification("run_complete", onRunComplete);
 
+  // Hoisted so the finally can dispose it on every exit path (success,
+  // error, cancel). In watch mode the same token is shared across every
+  // rerun, so a subscription disposed only on cancellation would leak one
+  // handler per run.
+  let cancelSub: vscode.Disposable | undefined;
   try {
     await new Promise<void>((resolve, reject) => {
       // Cancellation resolves the run locally; the shared stdio session
       // stays up (tearing it down would kill the server for every other
       // consumer). The finally below removes our handlers, so any late
       // notifications for this run_id fall on the floor harmlessly.
-      const cancelSub = token.onCancellationRequested(() => {
-        cancelSub.dispose();
+      cancelSub = token.onCancellationRequested(() => {
         resolve();
       });
 
@@ -173,6 +177,7 @@ export async function dispatchRun(
       }, reject);
     });
   } finally {
+    cancelSub?.dispose();
     client.offNotification("run_start", onRunStart);
     client.offNotification("test_complete", onTestComplete);
     client.offNotification("run_complete", onRunComplete);
