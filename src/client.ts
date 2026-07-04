@@ -66,7 +66,16 @@ export class TrykeClient {
         resolve: resolve as (value: unknown) => void,
         reject,
       });
-      this.input!.write(JSON.stringify(msg) + "\n");
+      try {
+        this.input!.write(JSON.stringify(msg) + "\n");
+      } catch (err) {
+        // write() can throw synchronously — e.g. ERR_STREAM_WRITE_AFTER_END
+        // once the server's stdin has been ended. Drop the pending entry so
+        // it can't leak or be double-rejected by a later disconnect/close,
+        // then reject this call.
+        this.pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
