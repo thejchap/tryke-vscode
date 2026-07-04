@@ -6,6 +6,9 @@ import {
   dispatchRun,
   DispatchClient,
 } from "../serverRunner";
+import {
+  _setStateForTesting,
+} from "../serverManager";
 import type { TrykeConfig } from "../config";
 
 function defaultConfig(overrides: Partial<TrykeConfig> = {}): TrykeConfig {
@@ -184,6 +187,23 @@ suite("dispatchRun handler lifecycle", () => {
     client.request = <T = unknown>(): Promise<T> => new Promise<T>(() => undefined);
 
     const tokenSource = new vscode.CancellationTokenSource();
+    let disconnected = false;
+    const serverProc = {
+      pid: 1234,
+      exitCode: null,
+      killed: false,
+      kill: () => true,
+      once: () => serverProc,
+    } as unknown as import("child_process").ChildProcess;
+    _setStateForTesting({
+      kind: "running",
+      proc: serverProc,
+      client: {
+        disconnect: () => {
+          disconnected = true;
+        },
+      } as unknown as import("../client").TrykeClient,
+    });
     const testRun = {
       started: () => undefined,
       enqueued: () => undefined,
@@ -207,7 +227,9 @@ suite("dispatchRun handler lifecycle", () => {
     tokenSource.cancel();
     await runP;
 
+    assert.strictEqual(disconnected, true, "cancellation must stop the server-side run");
     assert.strictEqual(client.totalAttached(), 0);
+    _setStateForTesting({ kind: "idle" });
   });
 
   test("does not dispatch a run when the token is already cancelled on entry", async () => {
