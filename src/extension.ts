@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { TrykeTestController } from "./controller";
-import { ensureServer, stopServer, stopServerAndWait } from "./serverManager";
+import { ensureServer, stopServerAndWait } from "./serverManager";
 import { getConfig } from "./config";
 import { log } from "./log";
 
@@ -65,6 +65,10 @@ function getWorkspaceRoot(): string | undefined {
 }
 
 export function deactivate() {
-  stopServer();
+  // Fire-and-forget: we can't block deactivation on the server exiting, but
+  // going through stopServerAndWait() arms the SIGKILL backstop (via
+  // waitForExit) so a wedged child isn't orphaned. Its timers are unref()'d,
+  // so this doesn't keep the host alive.
+  void stopServerAndWait();
   controller = undefined;
 }
