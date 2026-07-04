@@ -8,6 +8,7 @@ import {
   RunCompleteParamsSchema,
 } from "./schema";
 import { reportResult } from "./resultMapper";
+import { assertionGutter } from "./assertionGutter";
 import { ensureServer } from "./serverManager";
 import { buildTestId } from "./testId";
 import { log } from "./log";
@@ -101,6 +102,7 @@ export async function dispatchRun(
       const testItem = testMap.get(testId);
       if (testItem) {
         testRun.started(testItem);
+        assertionGutter().clearTest(testItem);
       }
     }
   };
@@ -119,6 +121,7 @@ export async function dispatchRun(
     const testItem = testMap.get(testId);
     if (testItem) {
       reportResult(testRun, testItem, result, workspaceRoot);
+      assertionGutter().record(testItem, result, workspaceRoot);
     }
   };
 
