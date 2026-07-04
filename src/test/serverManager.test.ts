@@ -101,6 +101,32 @@ function fakeReadyProc(pid = 5678): cp.ChildProcess {
   return proc;
 }
 
+// Like fakeReadyProc, but answers `ping` with a JSON-RPC error so the
+// readiness probe rejects instead of resolving.
+function fakeFailingReadyProc(pid = 7777): cp.ChildProcess {
+  const proc = fakeProc(pid);
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  stdin.on("data", (chunk: Buffer) => {
+    const request = JSON.parse(chunk.toString()) as {
+      id: number;
+      method: string;
+    };
+    if (request.method === "ping") {
+      stdout.write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: { code: -1, message: "not ready" },
+        }) + "\n",
+      );
+    }
+  });
+  Object.assign(proc, { stdin, stdout, stderr, unref: () => proc });
+  return proc;
+}
+
 // The state machine only ever calls disconnect() on the client during a
 // stop, so a spy for that one method is all the fake needs.
 function fakeClient(onDisconnect?: () => void): TrykeClient {
@@ -226,5 +252,30 @@ suite("server state machine", () => {
       markExited(replacement);
       replacement.emit("exit", 0, null);
     }
+  });
+
+  test("readiness failure tears down via the stop path, not idle + bare SIGTERM", async () => {
+    _setStateForTesting({ kind: "idle" });
+    let failing: cp.ChildProcess | undefined;
+    _setSpawnForTesting(((...args: Parameters<typeof cp.spawn>) => {
+      void args;
+      failing = fakeFailingReadyProc(7777);
+      return failing;
+    }) as typeof cp.spawn);
+
+    await assert.rejects(ensureServer(defaultConfig(), "/workspace"), /not ready/i);
+
+    // Routed through stopServer(): state is `stopping` (so a concurrent
+    // ensureServer waits for this child) rather than `idle` (which would let it
+    // spawn a second server while this one is still dying).
+    const state = _getStateForTesting();
+    assert.strictEqual(state.kind, "stopping", `expected stopping, got ${state.kind}`);
+
+    // Let the exit fire so teardown returns us to idle for the next test.
+    if (failing) {
+      markExited(failing);
+      failing.emit("exit", 0, null);
+    }
+    assert.strictEqual(_getStateForTesting().kind, "idle");
   });
 });
