@@ -106,6 +106,18 @@ export class TrykeClient {
     this.notificationHandlers.clear();
   }
 
+  // A write queued before teardown can still emit an async EPIPE on the dead
+  // stdin, and an unhandled 'error' event crashes the extension host — so a
+  // listener must stay. But `onInputError` is instance-bound, so leaving it on
+  // the old stream would pin this client and block GC. Swap it for a detached
+  // closure that swallows (and logs) the late error without capturing `this`.
+  private detachInputErrorListener(input: Writable): void {
+    input.off("error", this.onInputError);
+    input.on("error", (err: Error) =>
+      log("client: late input stream error —", err.message),
+    );
+  }
+
   /**
    * Tear the session down: reject anything still pending, detach from the
    * streams, and half-close the server's stdin. EOF on stdin is the
@@ -131,10 +143,11 @@ export class TrykeClient {
       output.off("end", this.onEnd);
       output.off("error", this.onOutputError);
     }
-    if (input && !input.destroyed) {
-      // Leave the error listener on: a write queued before disconnect can
-      // still surface an async EPIPE after we let go.
-      input.end();
+    if (input) {
+      this.detachInputErrorListener(input);
+      if (!input.destroyed) {
+        input.end();
+      }
     }
   }
 
@@ -182,9 +195,12 @@ export class TrykeClient {
     output.off("data", this.onData);
     output.off("end", this.onEnd);
     output.off("error", this.onOutputError);
-    // Leave the input error listener attached (as disconnect does) so a
-    // write already queued on the now-dead pipe can still surface its
-    // async EPIPE without crashing the extension host.
+    // Swap the input error listener for a detached one (see
+    // detachInputErrorListener) so a late async EPIPE on the now-dead pipe is
+    // still swallowed without keeping this client tied to the old stream.
+    if (this.input) {
+      this.detachInputErrorListener(this.input);
+    }
     this.input = undefined;
     this.output = undefined;
   }
