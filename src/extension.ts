@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { TrykeTestController } from "./controller";
-import { ensureServer, killServerOnPort, stopServer } from "./serverManager";
+import { ensureServer, stopServer, stopServerAndWait } from "./serverManager";
 import { getConfig } from "./config";
 import { log } from "./log";
 
@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       log("command: tryke.restartServer");
       try {
-        await killServerOnPort(config.server.host, config.server.port);
+        await stopServerAndWait();
         await ensureServer(config, workspaceRoot);
         vscode.window.showInformationMessage("Tryke server restarted.");
       } catch (err) {
@@ -30,10 +30,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
     vscode.commands.registerCommand("tryke.stopServer", async () => {
-      const config = getConfig();
       log("command: tryke.stopServer");
       try {
-        await killServerOnPort(config.server.host, config.server.port);
+        await stopServerAndWait();
         vscode.window.showInformationMessage("Tryke server stopped.");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -66,9 +65,6 @@ function getWorkspaceRoot(): string | undefined {
 }
 
 export function deactivate() {
-  const config = getConfig();
-  if (config.server.autoStop) {
-    stopServer();
-  }
+  stopServer();
   controller = undefined;
 }

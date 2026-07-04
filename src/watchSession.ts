@@ -38,14 +38,13 @@ export class WatchSession implements vscode.Disposable {
 
   async start(): Promise<void> {
     // Resolve runner mode once
-    this.runMode = await this.resolveMode();
+    this.runMode = this.resolveMode();
     log("watch: mode resolved to", this.runMode);
 
-    // For server mode, establish a persistent connection
+    // For server mode, hold on to the shared stdio session owned by
+    // serverManager for the life of the watch.
     if (this.runMode === "server") {
-      await ensureServer(this.config, this.workspaceRoot);
-      this.client = new TrykeClient();
-      await this.client.connect(this.config.server.host, this.config.server.port);
+      this.client = await ensureServer(this.config, this.workspaceRoot);
     }
 
     // Run initial test set
@@ -70,24 +69,11 @@ export class WatchSession implements vscode.Disposable {
     });
   }
 
-  private async resolveMode(): Promise<RunMode> {
-    if (this.config.mode === "direct") {
-      return "direct";
-    }
+  private resolveMode(): RunMode {
     if (this.config.mode === "server") {
       return "server";
     }
-    // Auto: try to ping server
-    const client = new TrykeClient();
-    try {
-      await client.connect(this.config.server.host, this.config.server.port);
-      await client.request("ping");
-      client.disconnect();
-      return "server";
-    } catch {
-      client.disconnect();
-      return "direct";
-    }
+    return "direct";
   }
 
   private onFileChanged(uri: vscode.Uri): void {
@@ -99,8 +85,7 @@ export class WatchSession implements vscode.Disposable {
 
     // Skip the extension-side debounce in server mode — the tryke server
     // already debounces watch-mode reruns internally, so the extra 500ms
-    // wait just adds latency. `runMode` is the resolved mode (auto already
-    // collapsed into direct/server in start()), so this catches auto→server.
+    // wait just adds latency.
     if (this.runMode === "server") {
       if (this.debounceTimer) {
         clearTimeout(this.debounceTimer);
@@ -174,21 +159,18 @@ export class WatchSession implements vscode.Disposable {
 
   // Returns true on a successful reconnect, false if all attempts fail. On
   // failure leaves `this.client = undefined` so the next executeRun won't
-  // try to drive a never-connected socket.
+  // try to drive a dead session. The session itself belongs to
+  // serverManager — "reconnect" here means asking it for a live server
+  // (respawning the child if the previous one died) and re-adopting the
+  // shared client.
   private async attemptReconnect(): Promise<boolean> {
-    if (this.client) {
-      this.client.disconnect();
-      this.client = undefined;
-    }
+    this.client = undefined;
     for (let attempt = 1; attempt <= RECONNECT_MAX_ATTEMPTS; attempt++) {
       if (this.disposed) {
         return false;
       }
       try {
-        await ensureServer(this.config, this.workspaceRoot);
-        const next = new TrykeClient();
-        await next.connect(this.config.server.host, this.config.server.port);
-        this.client = next;
+        this.client = await ensureServer(this.config, this.workspaceRoot);
         log("watch: reconnected to server on attempt", attempt);
         return true;
       } catch (err) {
@@ -286,10 +268,10 @@ export class WatchSession implements vscode.Disposable {
     if (this.watcher) {
       this.watcher.dispose();
     }
-    if (this.client) {
-      this.client.disconnect();
-      this.client = undefined;
-    }
+    // Drop our reference only — the client is serverManager's shared
+    // stdio session; disconnecting it here would shut the server down
+    // for everyone else.
+    this.client = undefined;
     if (this.resolveStart) {
       this.resolveStart();
     }

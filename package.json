@@ -56,31 +56,14 @@
           "type": "string",
           "enum": [
             "direct",
-            "server",
-            "auto"
+            "server"
           ],
-          "default": "auto",
-          "description": "Runner mode: 'direct' spawns a process per run, 'server' connects via TCP, 'auto' uses server if available."
-        },
-        "tryke.server.host": {
-          "type": "string",
-          "default": "127.0.0.1",
-          "description": "Tryke server host address."
-        },
-        "tryke.server.port": {
-          "type": "number",
-          "default": 2337,
-          "description": "Tryke server port."
-        },
-        "tryke.server.autoStart": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically start the tryke server when using server mode."
-        },
-        "tryke.server.autoStop": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically stop the tryke server when the extension deactivates."
+          "enumDescriptions": [
+            "Spawns a `tryke test` subprocess per run.",
+            "EXPERIMENTAL - IDE communicates with Tryke over an LSP-style client/server connection."
+          ],
+          "default": "direct",
+          "description": "Runner mode. Direct mode spawns a process per run. Server mode is experimental."
         },
         "tryke.server.logLevel": {
           "type": "string",
@@ -101,7 +84,7 @@
             "null"
           ],
           "default": null,
-          "description": "Number of worker threads for parallel test execution. Null uses tryke's default."
+          "description": "Number of worker processes for parallel test execution. Applies to direct and server modes. Null uses tryke's default."
         },
         "tryke.failFast": {
           "type": "boolean",

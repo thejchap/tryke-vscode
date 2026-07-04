@@ -9,8 +9,8 @@ function defaultConfig(overrides: Partial<TrykeConfig> = {}): TrykeConfig {
   return {
     command: "tryke",
     python: null,
-    mode: "auto",
-    server: { host: "127.0.0.1", port: 2337, autoStart: true, autoStop: true, logLevel: "info" },
+    mode: "direct",
+    server: { logLevel: "info" },
     workers: null,
     failFast: false,
     maxfail: null,

@@ -1,6 +1,6 @@
 // Wire types — re-exported from `schema.ts` so the zod-inferred type and the
 // runtime validator stay in lockstep. Anything that crosses the
-// CLI/RPC/socket boundary lives in schema.ts; the types declared inline here
+// CLI/RPC boundary lives in schema.ts; the types declared inline here
 // are extension-internal and don't need runtime validation.
 
 export type {

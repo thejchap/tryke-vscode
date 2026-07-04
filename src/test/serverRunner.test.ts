@@ -12,8 +12,8 @@ function defaultConfig(overrides: Partial<TrykeConfig> = {}): TrykeConfig {
   return {
     command: "tryke",
     python: null,
-    mode: "auto",
-    server: { host: "127.0.0.1", port: 2337, autoStart: true, autoStop: true, logLevel: "info" },
+    mode: "direct",
+    server: { logLevel: "info" },
     workers: null,
     failFast: false,
     maxfail: null,
@@ -134,7 +134,6 @@ class TrackingClient implements DispatchClient {
     }
     return Promise.resolve(undefined as T);
   }
-  disconnect(): void {}
   totalAttached(): number {
     let n = 0;
     for (const s of this.attached.values()) {
@@ -168,7 +167,6 @@ suite("dispatchRun handler lifecycle", () => {
       defaultConfig(),
       "/workspace",
       token,
-      false,
     );
 
     assert.strictEqual(
@@ -205,11 +203,45 @@ suite("dispatchRun handler lifecycle", () => {
       defaultConfig(),
       "/workspace",
       tokenSource.token,
-      false,
     );
     tokenSource.cancel();
     await runP;
 
     assert.strictEqual(client.totalAttached(), 0);
+  });
+
+  test("does not dispatch a run when the token is already cancelled on entry", async () => {
+    const client = new TrackingClient();
+    let requests = 0;
+    client.request = <T = unknown>(): Promise<T> => {
+      requests++;
+      return new Promise<T>(() => undefined);
+    };
+
+    const tokenSource = new vscode.CancellationTokenSource();
+    tokenSource.cancel();
+    const testRun = {
+      started: () => undefined,
+      enqueued: () => undefined,
+      passed: () => undefined,
+      failed: () => undefined,
+      errored: () => undefined,
+      skipped: () => undefined,
+      appendOutput: () => undefined,
+      end: () => undefined,
+    } as unknown as vscode.TestRun;
+
+    await dispatchRun(
+      client,
+      request(),
+      testRun,
+      new Map(),
+      defaultConfig(),
+      "/workspace",
+      tokenSource.token,
+    );
+
+    assert.strictEqual(requests, 0, "no run should be sent for an already-cancelled token");
+    assert.strictEqual(client.totalAttached(), 0, "handlers must still be cleaned up");
   });
 });

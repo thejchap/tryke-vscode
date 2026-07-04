@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import * as crypto from "crypto";
 import { TrykeConfig } from "./config";
-import { TrykeClient } from "./client";
 import { RunParams } from "./types";
 import {
   RunStartParamsSchema,
@@ -27,12 +26,12 @@ function generateRunId(): string {
 }
 
 // The minimal client surface dispatchRun needs. TrykeClient implements this;
-// tests pass an in-memory fake to drive the dispatcher without a real socket.
+// tests pass an in-memory fake to drive the dispatcher without a real
+// server process.
 export interface DispatchClient {
   onNotification(method: string, handler: (params: unknown) => void): void;
   offNotification(method: string, handler: (params: unknown) => void): void;
   request<T = unknown>(method: string, params?: unknown): Promise<T>;
-  disconnect(): void;
 }
 
 
@@ -44,16 +43,11 @@ export async function runServer(
   workspaceRoot: string,
   token: vscode.CancellationToken,
 ): Promise<void> {
-  await ensureServer(config, workspaceRoot);
-
-  const client = new TrykeClient();
-  await client.connect(config.server.host, config.server.port);
-
-  try {
-    await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token, true);
-  } finally {
-    client.disconnect();
-  }
+  // The server speaks JSON-RPC over its own stdio, so every run shares
+  // the one session owned by serverManager. Per-run isolation comes from
+  // run_id filtering in dispatchRun, not from per-run connections.
+  const client = await ensureServer(config, workspaceRoot);
+  await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token);
 }
 
 /** Run tests using an existing persistent client (for watch mode). */
@@ -71,7 +65,7 @@ export async function runServerWithClient(
   // run is fully drained. Don't clear here: doing so would race a trailing
   // `test_complete` that's still in flight on the wire when the previous
   // run resolved, dropping it before the next handler set is installed.
-  await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token, false);
+  await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token);
 }
 
 export async function dispatchRun(
@@ -82,7 +76,6 @@ export async function dispatchRun(
   config: TrykeConfig,
   workspaceRoot: string,
   token: vscode.CancellationToken,
-  disconnectOnCancel: boolean,
 ): Promise<void> {
   const runId = generateRunId();
   log("server: dispatching run with run_id", runId);
@@ -157,15 +150,27 @@ export async function dispatchRun(
   client.onNotification("test_complete", onTestComplete);
   client.onNotification("run_complete", onRunComplete);
 
+  // Hoisted so the finally can dispose it on every exit path (success,
+  // error, cancel). In watch mode the same token is shared across every
+  // rerun, so a subscription disposed only on cancellation would leak one
+  // handler per run.
+  let cancelSub: vscode.Disposable | undefined;
   try {
     await new Promise<void>((resolve, reject) => {
-      const cancelSub = token.onCancellationRequested(() => {
-        cancelSub.dispose();
-        if (disconnectOnCancel) {
-          client.disconnect();
-        }
+      // Cancellation resolves the run locally; the shared stdio session
+      // stays up (tearing it down would kill the server for every other
+      // consumer). The finally below removes our handlers, so any late
+      // notifications for this run_id fall on the floor harmlessly.
+      cancelSub = token.onCancellationRequested(() => {
         resolve();
       });
+
+      // Already cancelled before we even dispatched — don't start a
+      // server-side run the caller has already abandoned.
+      if (token.isCancellationRequested) {
+        resolve();
+        return;
+      }
 
       const params = buildRunParams(request, config, runId);
       client.request("run", params).then(async () => {
@@ -179,6 +184,7 @@ export async function dispatchRun(
       }, reject);
     });
   } finally {
+    cancelSub?.dispose();
     client.offNotification("run_start", onRunStart);
     client.offNotification("test_complete", onTestComplete);
     client.offNotification("run_complete", onRunComplete);
