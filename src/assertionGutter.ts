@@ -263,6 +263,11 @@ export function assertionGutter(): AssertionGutter {
   return (instance ??= new AssertionGutter());
 }
 
+// Clear existing markers without creating the singleton just for discovery.
+export function clearAssertionGutter(): void {
+  instance?.clearAll();
+}
+
 export function disposeAssertionGutter(): void {
   instance?.dispose();
   instance = undefined;

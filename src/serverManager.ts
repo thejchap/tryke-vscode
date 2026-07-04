@@ -33,6 +33,7 @@ export type ServerState =
   | { kind: "stopping"; proc: cp.ChildProcess };
 
 let state: ServerState = { kind: "idle" };
+let spawnProcess = cp.spawn;
 
 function transition(next: ServerState): void {
   log("server: state", state.kind, "→", next.kind);
@@ -45,6 +46,9 @@ export function _getStateForTesting(): ServerState {
 }
 export function _setStateForTesting(next: ServerState): void {
   state = next;
+}
+export function _setSpawnForTesting(spawn: typeof cp.spawn | undefined): void {
+  spawnProcess = spawn ?? cp.spawn;
 }
 
 export function buildServerArgs(
@@ -71,25 +75,37 @@ export async function ensureServer(
   config: TrykeConfig,
   workspaceRoot: string,
 ): Promise<TrykeClient> {
-  if (state.kind === "running") {
-    return state.client;
-  }
+  for (;;) {
+    if (state.kind === "running") {
+      return state.client;
+    }
 
-  // Concurrent ensureServer calls: piggy-back on the in-flight start
-  // rather than spawning a second process.
-  if (state.kind === "starting") {
-    log("server: ensureServer awaiting in-flight start");
-    return state.ready;
-  }
+    // Concurrent ensureServer calls piggy-back on the in-flight start rather
+    // than spawning a second process.
+    if (state.kind === "starting") {
+      log("server: ensureServer awaiting in-flight start");
+      return state.ready;
+    }
 
-  // A stop is in flight (stdin half-closed, SIGTERM escalation pending).
-  // Spawning now would leave two server children alive at once, so wait
-  // for the dying child to exit before starting a fresh one. The `exit`
-  // handler transitions us to `idle`, after which we fall through and
-  // spawn below.
-  if (state.kind === "stopping") {
+    if (state.kind === "idle") {
+      break;
+    }
+
+    // A stop is in flight (stdin half-closed, SIGTERM escalation pending).
+    // Recheck the complete state machine after the wait: another caller may
+    // already have claimed `idle` and started the replacement while this
+    // caller was suspended.
+    const stoppingProc = state.proc;
     log("server: ensureServer waiting for in-flight stop to finish");
-    await waitForExit(state.proc);
+    await waitForExit(stoppingProc);
+    const afterStop = _getStateForTesting();
+    if (
+      afterStop.kind === "stopping" &&
+      afterStop.proc === stoppingProc &&
+      stoppingProc.exitCode !== null
+    ) {
+      transition({ kind: "idle" });
+    }
   }
 
   // Pass `--root` AND set `cwd` to the workspace. tryke writes its discovery
@@ -113,7 +129,7 @@ export async function ensureServer(
 
   // stdin/stdout are the RPC session — the extension owns them for the
   // life of the process. Only stderr carries human-readable logs now.
-  const proc = cp.spawn(config.command, spawnArgs, {
+  const proc = spawnProcess(config.command, spawnArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: workspaceRoot,
     env: { ...process.env, TRYKE_LOG: trykeLog },
@@ -232,6 +248,12 @@ function waitForExit(proc: cp.ChildProcess): Promise<void> {
         proc.kill("SIGKILL");
       } catch (err) {
         log("server: SIGKILL for pid", proc.pid, "failed —", err instanceof Error ? err.message : String(err));
+      }
+      // Preserve the existing bounded-wait contract. Once SIGKILL has been
+      // attempted, release ownership so callers can start a replacement; the
+      // old process's eventual exit handler cannot disturb that new state.
+      if (currentProc() === proc) {
+        transition({ kind: "idle" });
       }
       resolve();
     }, SHUTDOWN_GRACE_MS + 2_000);

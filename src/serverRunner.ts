@@ -9,7 +9,7 @@ import {
 } from "./schema";
 import { reportResult } from "./resultMapper";
 import { assertionGutter } from "./assertionGutter";
-import { ensureServer } from "./serverManager";
+import { ensureServer, stopServer } from "./serverManager";
 import { buildTestId } from "./testId";
 import { log } from "./log";
 
@@ -160,11 +160,13 @@ export async function dispatchRun(
   let cancelSub: vscode.Disposable | undefined;
   try {
     await new Promise<void>((resolve, reject) => {
-      // Cancellation resolves the run locally; the shared stdio session
-      // stays up (tearing it down would kill the server for every other
-      // consumer). The finally below removes our handlers, so any late
-      // notifications for this run_id fall on the floor harmlessly.
+      // The server protocol has no per-run cancellation request. Closing the
+      // extension-owned stdio session is therefore the only way to stop the
+      // active worker run rather than merely abandoning its notifications.
+      // serverManager moves to `stopping` before disconnecting, so the next
+      // ensureServer call waits for this child to exit and starts a clean one.
       cancelSub = token.onCancellationRequested(() => {
+        stopServer();
         resolve();
       });
 
