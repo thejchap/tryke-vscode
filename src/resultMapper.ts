@@ -234,7 +234,7 @@ function buildDoctestMessage(
 // so the diff only appears in the bottom panel. Resolve relative paths
 // against the workspace root before constructing the URI; fall back to
 // the testItem's own URI if the field is absent.
-function resolveAssertionUri(
+export function resolveAssertionUri(
   file: string | null | undefined,
   testItem: vscode.TestItem,
   workspaceRoot: string,

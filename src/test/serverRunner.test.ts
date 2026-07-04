@@ -6,6 +6,9 @@ import {
   dispatchRun,
   DispatchClient,
 } from "../serverRunner";
+import {
+  _setStateForTesting,
+} from "../serverManager";
 import type { TrykeConfig } from "../config";
 
 function defaultConfig(overrides: Partial<TrykeConfig> = {}): TrykeConfig {
@@ -184,6 +187,23 @@ suite("dispatchRun handler lifecycle", () => {
     client.request = <T = unknown>(): Promise<T> => new Promise<T>(() => undefined);
 
     const tokenSource = new vscode.CancellationTokenSource();
+    let disconnected = false;
+    const serverProc = {
+      pid: 1234,
+      exitCode: null,
+      killed: false,
+      kill: () => true,
+      once: () => serverProc,
+    } as unknown as import("child_process").ChildProcess;
+    _setStateForTesting({
+      kind: "running",
+      proc: serverProc,
+      client: {
+        disconnect: () => {
+          disconnected = true;
+        },
+      } as unknown as import("../client").TrykeClient,
+    });
     const testRun = {
       started: () => undefined,
       enqueued: () => undefined,
@@ -203,11 +223,72 @@ suite("dispatchRun handler lifecycle", () => {
       defaultConfig(),
       "/workspace",
       tokenSource.token,
+      { stopServerOnCancel: true },
     );
     tokenSource.cancel();
     await runP;
 
+    assert.strictEqual(disconnected, true, "cancellation must stop the server-side run");
     assert.strictEqual(client.totalAttached(), 0);
+    _setStateForTesting({ kind: "idle" });
+  });
+
+  test("watch-mode cancel drops handlers WITHOUT stopping the shared server", async () => {
+    // A watch-mode dispatch shares the persistent session with every other run
+    // — cancelling it must not tear down the server (which would kill the other
+    // runs), only resolve and clean up its own handlers.
+    const client = new TrackingClient();
+    client.request = <T = unknown>(): Promise<T> => new Promise<T>(() => undefined);
+
+    const tokenSource = new vscode.CancellationTokenSource();
+    let disconnected = false;
+    const serverProc = {
+      pid: 4321,
+      exitCode: null,
+      killed: false,
+      kill: () => true,
+      once: () => serverProc,
+    } as unknown as import("child_process").ChildProcess;
+    _setStateForTesting({
+      kind: "running",
+      proc: serverProc,
+      client: {
+        disconnect: () => {
+          disconnected = true;
+        },
+      } as unknown as import("../client").TrykeClient,
+    });
+    const testRun = {
+      started: () => undefined,
+      enqueued: () => undefined,
+      passed: () => undefined,
+      failed: () => undefined,
+      errored: () => undefined,
+      skipped: () => undefined,
+      appendOutput: () => undefined,
+      end: () => undefined,
+    } as unknown as vscode.TestRun;
+
+    const runP = dispatchRun(
+      client,
+      request(),
+      testRun,
+      new Map(),
+      defaultConfig(),
+      "/workspace",
+      tokenSource.token,
+      { stopServerOnCancel: false },
+    );
+    tokenSource.cancel();
+    await runP;
+
+    assert.strictEqual(
+      disconnected,
+      false,
+      "watch-mode cancel must NOT stop the shared server",
+    );
+    assert.strictEqual(client.totalAttached(), 0, "handlers must still be cleaned up");
+    _setStateForTesting({ kind: "idle" });
   });
 
   test("does not dispatch a run when the token is already cancelled on entry", async () => {

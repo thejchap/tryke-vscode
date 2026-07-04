@@ -1,12 +1,15 @@
 import * as assert from "assert";
 import * as cp from "child_process";
 import { EventEmitter } from "events";
+import { PassThrough } from "stream";
 import { TrykeClient } from "../client";
 import {
   buildServerArgs,
+  ensureServer,
   hasActiveServer,
   stopServer,
   _getStateForTesting,
+  _setSpawnForTesting,
   _setStateForTesting,
 } from "../serverManager";
 import type { TrykeConfig } from "../config";
@@ -66,6 +69,64 @@ function fakeProc(pid = 1234): cp.ChildProcess {
   return ee;
 }
 
+function markExited(proc: cp.ChildProcess): void {
+  Object.defineProperty(proc, "exitCode", {
+    configurable: true,
+    value: 0,
+  });
+}
+
+function fakeReadyProc(pid = 5678): cp.ChildProcess {
+  const proc = fakeProc(pid);
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  stdin.on("data", (chunk: Buffer) => {
+    const request = JSON.parse(chunk.toString()) as {
+      id: number;
+      method: string;
+    };
+    if (request.method === "ping") {
+      stdout.write(
+        JSON.stringify({ jsonrpc: "2.0", id: request.id, result: null }) + "\n",
+      );
+    }
+  });
+  Object.assign(proc, {
+    stdin,
+    stdout,
+    stderr,
+    unref: () => proc,
+  });
+  return proc;
+}
+
+// Like fakeReadyProc, but answers `ping` with a JSON-RPC error so the
+// readiness probe rejects instead of resolving.
+function fakeFailingReadyProc(pid = 7777): cp.ChildProcess {
+  const proc = fakeProc(pid);
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  stdin.on("data", (chunk: Buffer) => {
+    const request = JSON.parse(chunk.toString()) as {
+      id: number;
+      method: string;
+    };
+    if (request.method === "ping") {
+      stdout.write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: { code: -1, message: "not ready" },
+        }) + "\n",
+      );
+    }
+  });
+  Object.assign(proc, { stdin, stdout, stderr, unref: () => proc });
+  return proc;
+}
+
 // The state machine only ever calls disconnect() on the client during a
 // stop, so a spy for that one method is all the fake needs.
 function fakeClient(onDisconnect?: () => void): TrykeClient {
@@ -77,6 +138,7 @@ function fakeClient(onDisconnect?: () => void): TrykeClient {
 suite("server state machine", () => {
   teardown(() => {
     _setStateForTesting({ kind: "idle" });
+    _setSpawnForTesting(undefined);
   });
 
   test("starts in idle state with no active server", () => {
@@ -157,5 +219,63 @@ suite("server state machine", () => {
 
     assert.strictEqual(_getStateForTesting().kind, "stopping");
     assert.strictEqual(disconnected, true);
+  });
+
+  test("concurrent starts after a stop share one replacement server", async () => {
+    const stoppingProc = fakeProc(1000);
+    stoppingProc.once("exit", () => {
+      _setStateForTesting({ kind: "idle" });
+    });
+    _setStateForTesting({ kind: "stopping", proc: stoppingProc });
+
+    let spawnCount = 0;
+    let replacement: cp.ChildProcess | undefined;
+    _setSpawnForTesting(((...args: Parameters<typeof cp.spawn>) => {
+      void args;
+      spawnCount++;
+      replacement = fakeReadyProc(2000);
+      return replacement;
+    }) as typeof cp.spawn);
+
+    const first = ensureServer(defaultConfig(), "/workspace");
+    const second = ensureServer(defaultConfig(), "/workspace");
+
+    markExited(stoppingProc);
+    stoppingProc.emit("exit", 0, null);
+
+    const [firstClient, secondClient] = await Promise.all([first, second]);
+    assert.strictEqual(spawnCount, 1);
+    assert.strictEqual(firstClient, secondClient);
+
+    stopServer();
+    if (replacement) {
+      markExited(replacement);
+      replacement.emit("exit", 0, null);
+    }
+  });
+
+  test("readiness failure tears down via the stop path, not idle + bare SIGTERM", async () => {
+    _setStateForTesting({ kind: "idle" });
+    let failing: cp.ChildProcess | undefined;
+    _setSpawnForTesting(((...args: Parameters<typeof cp.spawn>) => {
+      void args;
+      failing = fakeFailingReadyProc(7777);
+      return failing;
+    }) as typeof cp.spawn);
+
+    await assert.rejects(ensureServer(defaultConfig(), "/workspace"), /not ready/i);
+
+    // Routed through stopServer(): state is `stopping` (so a concurrent
+    // ensureServer waits for this child) rather than `idle` (which would let it
+    // spawn a second server while this one is still dying).
+    const state = _getStateForTesting();
+    assert.strictEqual(state.kind, "stopping", `expected stopping, got ${state.kind}`);
+
+    // Let the exit fire so teardown returns us to idle for the next test.
+    if (failing) {
+      markExited(failing);
+      failing.emit("exit", 0, null);
+    }
+    assert.strictEqual(_getStateForTesting().kind, "idle");
   });
 });

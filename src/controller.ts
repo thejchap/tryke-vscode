@@ -4,6 +4,10 @@ import { discoverTests } from "./discovery";
 import { resolveRunner } from "./runner";
 import { runDirect } from "./directRunner";
 import { WatchSession } from "./watchSession";
+import {
+  clearAssertionGutter,
+  disposeAssertionGutter,
+} from "./assertionGutter";
 
 export class TrykeTestController implements vscode.Disposable {
   private controller: vscode.TestController;
@@ -92,6 +96,10 @@ export class TrykeTestController implements vscode.Disposable {
     // when a click landed in that window.
     try {
       const result = await discoverTests(this.controller, config, workspaceRoot);
+      // Discovery reflects the current source. Existing marks may refer to a
+      // removed test or to an assertion deleted from an otherwise unchanged
+      // test ID, so none of them are safe to carry across this replacement.
+      clearAssertionGutter();
       this.testMap = result.testMap;
       this.controller.items.replace(result.rootItems);
     } catch (err) {
@@ -197,6 +205,7 @@ export class TrykeTestController implements vscode.Disposable {
     for (const d of this.disposables) {
       d.dispose();
     }
+    disposeAssertionGutter();
     this.controller.dispose();
   }
 }

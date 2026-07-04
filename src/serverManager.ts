@@ -33,10 +33,19 @@ export type ServerState =
   | { kind: "stopping"; proc: cp.ChildProcess };
 
 let state: ServerState = { kind: "idle" };
+let spawnProcess = cp.spawn;
 
 function transition(next: ServerState): void {
   log("server: state", state.kind, "→", next.kind);
   state = next;
+}
+
+// Read the module state as its full union type. Written as a function so TS
+// uses the declared return type rather than narrowing to whatever variant an
+// earlier control-flow check proved — across an `await`, `transition()` can
+// have moved us to a different variant under us.
+function currentState(): ServerState {
+  return state;
 }
 
 // Test-only accessors. Production callers should go through `hasActiveServer`.
@@ -45,6 +54,9 @@ export function _getStateForTesting(): ServerState {
 }
 export function _setStateForTesting(next: ServerState): void {
   state = next;
+}
+export function _setSpawnForTesting(spawn: typeof cp.spawn | undefined): void {
+  spawnProcess = spawn ?? cp.spawn;
 }
 
 export function buildServerArgs(
@@ -71,25 +83,37 @@ export async function ensureServer(
   config: TrykeConfig,
   workspaceRoot: string,
 ): Promise<TrykeClient> {
-  if (state.kind === "running") {
-    return state.client;
-  }
+  for (;;) {
+    if (state.kind === "running") {
+      return state.client;
+    }
 
-  // Concurrent ensureServer calls: piggy-back on the in-flight start
-  // rather than spawning a second process.
-  if (state.kind === "starting") {
-    log("server: ensureServer awaiting in-flight start");
-    return state.ready;
-  }
+    // Concurrent ensureServer calls piggy-back on the in-flight start rather
+    // than spawning a second process.
+    if (state.kind === "starting") {
+      log("server: ensureServer awaiting in-flight start");
+      return state.ready;
+    }
 
-  // A stop is in flight (stdin half-closed, SIGTERM escalation pending).
-  // Spawning now would leave two server children alive at once, so wait
-  // for the dying child to exit before starting a fresh one. The `exit`
-  // handler transitions us to `idle`, after which we fall through and
-  // spawn below.
-  if (state.kind === "stopping") {
+    if (state.kind === "idle") {
+      break;
+    }
+
+    // A stop is in flight (stdin half-closed, SIGTERM escalation pending).
+    // Recheck the complete state machine after the wait: another caller may
+    // already have claimed `idle` and started the replacement while this
+    // caller was suspended.
+    const stoppingProc = state.proc;
     log("server: ensureServer waiting for in-flight stop to finish");
-    await waitForExit(state.proc);
+    await waitForExit(stoppingProc);
+    const afterStop = currentState();
+    if (
+      afterStop.kind === "stopping" &&
+      afterStop.proc === stoppingProc &&
+      stoppingProc.exitCode !== null
+    ) {
+      transition({ kind: "idle" });
+    }
   }
 
   // Pass `--root` AND set `cwd` to the workspace. tryke writes its discovery
@@ -113,11 +137,27 @@ export async function ensureServer(
 
   // stdin/stdout are the RPC session — the extension owns them for the
   // life of the process. Only stderr carries human-readable logs now.
-  const proc = cp.spawn(config.command, spawnArgs, {
+  const proc = spawnProcess(config.command, spawnArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: workspaceRoot,
     env: { ...process.env, TRYKE_LOG: trykeLog },
   });
+  // Don't let the child keep the extension host's event loop alive during
+  // shutdown: `deactivate()` calls `stopServer()` but can't await the exit,
+  // so if the server doesn't die immediately its handles could block the host
+  // from settling. `unref()` the process handle AND each piped stdio socket
+  // (unref'ing the ChildProcess alone leaves stdin/stdout/stderr ref'd). The
+  // streams stay fully usable while the host is running — the host's own
+  // handles keep the loop alive — they just no longer hold it open on their
+  // own during teardown.
+  proc.unref();
+  // Piped child stdio are Sockets with .unref() at runtime, but the
+  // Writable/Readable stream types don't declare it — narrow structurally.
+  const unrefStream = (s: unknown): void =>
+    void (s as { unref?: () => void } | null | undefined)?.unref?.();
+  unrefStream(proc.stdin);
+  unrefStream(proc.stdout);
+  unrefStream(proc.stderr);
 
   pipeToServerChannel(proc.stderr);
 
@@ -152,23 +192,33 @@ export async function ensureServer(
   try {
     await ready;
   } catch (err) {
+    // Readiness failed (ping timeout, or the child crashed during startup).
+    // If we still own this proc, tear it down through the normal stop path:
+    // stopServer() disconnects the client (rejecting the in-flight ping),
+    // moves us to `stopping` so a concurrent ensureServer waits for this child
+    // instead of spawning a second one, and runs the bounded
+    // EOF→SIGTERM→SIGKILL escalation via waitForExit. If the exit handler
+    // already fired (crash), it disconnected the client and set us idle —
+    // nothing left to tear down.
     if (currentProc() === proc) {
-      transition({ kind: "idle" });
+      stopServer();
     }
-    proc.kill("SIGTERM");
     throw err;
   }
 
-  // The exit handler may have already moved us back to idle if the server
-  // crashed during the readiness wait. Only promote to running if we still
-  // own this proc. Read through `_getStateForTesting()` so TS doesn't
-  // narrow `state` based on the pre-await snapshot — handlers that fired
-  // during the await can have transitioned us elsewhere.
-  const after = _getStateForTesting();
+  // Handlers (exit/error) or a concurrent stop can have transitioned us during
+  // the await. Re-read the module state through an explicit `ServerState`
+  // annotation so TS doesn't narrow it to the pre-await snapshot.
+  const after = currentState();
   if (after.kind === "starting" && after.proc === proc) {
     transition({ kind: "running", proc, client });
+    return client;
   }
-  return client;
+  // We no longer own this proc — the child crashed during readiness, or a
+  // concurrent stop/restart superseded this start. The client may already be
+  // disconnected, so don't hand back a dead session; fail so the caller
+  // doesn't adopt it.
+  throw new Error("tryke server was superseded before it became ready");
 }
 
 /**
@@ -226,6 +276,12 @@ function waitForExit(proc: cp.ChildProcess): Promise<void> {
         proc.kill("SIGKILL");
       } catch (err) {
         log("server: SIGKILL for pid", proc.pid, "failed —", err instanceof Error ? err.message : String(err));
+      }
+      // Preserve the existing bounded-wait contract. Once SIGKILL has been
+      // attempted, release ownership so callers can start a replacement; the
+      // old process's eventual exit handler cannot disturb that new state.
+      if (currentProc() === proc) {
+        transition({ kind: "idle" });
       }
       resolve();
     }, SHUTDOWN_GRACE_MS + 2_000);

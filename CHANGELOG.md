@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- Add per-assertion gutter status. VS Code paints one test-status icon per
+  test function; tryke reports each `expect(...)` individually and keeps
+  running past a failure, so a failing test can mix passed and failed
+  assertions. The extension now draws a pass/fail icon in the editor gutter
+  next to each assertion line, derived from the test result's
+  `expected_assertions`, failed `assertions`, and `executed_lines` (expects
+  that never ran get no marker). Markers clear when a test is re-enqueued.
 - Remove `auto` runner mode and default `tryke.mode` to `direct`. Server
   mode remains available as an explicit experimental opt-in.
 - Fix (watch mode): pass `tryke.workers` through to the stdio server so

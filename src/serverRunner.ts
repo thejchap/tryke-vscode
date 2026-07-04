@@ -8,7 +8,8 @@ import {
   RunCompleteParamsSchema,
 } from "./schema";
 import { reportResult } from "./resultMapper";
-import { ensureServer } from "./serverManager";
+import { assertionGutter } from "./assertionGutter";
+import { ensureServer, stopServer } from "./serverManager";
 import { buildTestId } from "./testId";
 import { log } from "./log";
 
@@ -34,6 +35,17 @@ export interface DispatchClient {
   request<T = unknown>(method: string, params?: unknown): Promise<T>;
 }
 
+export interface DispatchOptions {
+  // On cancellation, tear down the shared stdio session via stopServer(). The
+  // server protocol has no per-run cancel, so closing the session is the only
+  // way to actually stop the server-side worker run. But the session is shared
+  // by every run and watch session on this server, so only a one-off run may
+  // opt in — a watch-mode dispatch must resolve WITHOUT stopping the server,
+  // or cancelling one run would kill every other run and the watch session
+  // sharing it. Per-run result isolation still comes from run_id filtering.
+  stopServerOnCancel: boolean;
+}
+
 
 export async function runServer(
   request: vscode.TestRunRequest,
@@ -47,7 +59,11 @@ export async function runServer(
   // the one session owned by serverManager. Per-run isolation comes from
   // run_id filtering in dispatchRun, not from per-run connections.
   const client = await ensureServer(config, workspaceRoot);
-  await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token);
+  // One-off run: cancelling it should stop the server-side run, and this run
+  // owns the (freshly ensured) session, so opt into stopping the server.
+  await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token, {
+    stopServerOnCancel: true,
+  });
 }
 
 /** Run tests using an existing persistent client (for watch mode). */
@@ -65,7 +81,13 @@ export async function runServerWithClient(
   // run is fully drained. Don't clear here: doing so would race a trailing
   // `test_complete` that's still in flight on the wire when the previous
   // run resolved, dropping it before the next handler set is installed.
-  await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token);
+  //
+  // Watch mode shares one persistent session across the whole session's life,
+  // so a cancelled rerun must NOT stop the server — it just drops its handlers
+  // and resolves. The WatchSession owns server teardown separately.
+  await dispatchRun(client, request, testRun, testMap, config, workspaceRoot, token, {
+    stopServerOnCancel: false,
+  });
 }
 
 export async function dispatchRun(
@@ -76,6 +98,7 @@ export async function dispatchRun(
   config: TrykeConfig,
   workspaceRoot: string,
   token: vscode.CancellationToken,
+  opts: DispatchOptions = { stopServerOnCancel: false },
 ): Promise<void> {
   const runId = generateRunId();
   log("server: dispatching run with run_id", runId);
@@ -101,6 +124,7 @@ export async function dispatchRun(
       const testItem = testMap.get(testId);
       if (testItem) {
         testRun.started(testItem);
+        assertionGutter().clearTest(testItem);
       }
     }
   };
@@ -119,6 +143,7 @@ export async function dispatchRun(
     const testItem = testMap.get(testId);
     if (testItem) {
       reportResult(testRun, testItem, result, workspaceRoot);
+      assertionGutter().record(testItem, result, workspaceRoot);
     }
   };
 
@@ -157,11 +182,18 @@ export async function dispatchRun(
   let cancelSub: vscode.Disposable | undefined;
   try {
     await new Promise<void>((resolve, reject) => {
-      // Cancellation resolves the run locally; the shared stdio session
-      // stays up (tearing it down would kill the server for every other
-      // consumer). The finally below removes our handlers, so any late
-      // notifications for this run_id fall on the floor harmlessly.
+      // The server protocol has no per-run cancellation request. For a one-off
+      // run (stopServerOnCancel), closing the extension-owned stdio session is
+      // the only way to stop the active worker run rather than merely
+      // abandoning its notifications; serverManager moves to `stopping` before
+      // disconnecting, so the next ensureServer waits for this child and starts
+      // a clean one. A watch-mode dispatch shares the session with every other
+      // run, so it must only drop its handlers (in the finally) and resolve —
+      // never stop the shared server.
       cancelSub = token.onCancellationRequested(() => {
+        if (opts.stopServerOnCancel) {
+          stopServer();
+        }
         resolve();
       });
 

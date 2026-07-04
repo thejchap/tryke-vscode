@@ -97,11 +97,26 @@ suite("TrykeClient over stdio streams", () => {
     await tick();
 
     // A late frame arriving on the (now-detached) stream must not reach a
-    // stale handler — the closed session should have dropped them all.
-    output.write('{"jsonrpc":"2.0","method":"run_complete","params":{}}\n');
+    // stale handler — the closed session should have dropped them all. Emit
+    // 'data' directly rather than write() to the already-ended stream, which
+    // would raise ERR_STREAM_WRITE_AFTER_END.
+    output.emit("data", '{"jsonrpc":"2.0","method":"run_complete","params":{}}\n');
     await tick();
 
     assert.strictEqual(calls, 0, "handlers must be cleared once the session closes");
+  });
+
+  test("still swallows a late input error after the server closes its output", async () => {
+    const { input, output } = attachedClient();
+    output.end();
+    await tick();
+
+    // A write queued before the close can surface an async EPIPE on the dead
+    // stdin. A listener must remain (an unhandled 'error' would crash the
+    // host), even though the instance-bound one was detached for GC. emit()
+    // throws if and only if there is no 'error' listener.
+    assert.ok(input.listenerCount("error") >= 1, "input keeps an error listener");
+    assert.doesNotThrow(() => input.emit("error", new Error("EPIPE")));
   });
 });
 
@@ -127,6 +142,18 @@ suite("TrykeClient.disconnect", () => {
     for (const r of results) {
       assert.strictEqual(r.status, "rejected");
     }
+  });
+
+  test("still swallows a late input error after disconnect", () => {
+    const { client, input } = attachedClient();
+    client.disconnect();
+
+    // disconnect() half-closes stdin; a write queued just before can still
+    // surface an async EPIPE. A listener must remain (unhandled 'error'
+    // crashes the host), even though the instance-bound one is detached so it
+    // no longer pins the client to the old stream.
+    assert.ok(input.listenerCount("error") >= 1, "input keeps an error listener");
+    assert.doesNotThrow(() => input.emit("error", new Error("EPIPE")));
   });
 
   test("is idempotent when never attached", () => {

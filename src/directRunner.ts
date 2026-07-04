@@ -4,6 +4,7 @@ import { TrykeEvent } from "./types";
 import { TrykeEventSchema } from "./schema";
 import { TrykeConfig } from "./config";
 import { reportResult } from "./resultMapper";
+import { assertionGutter } from "./assertionGutter";
 import { log } from "./log";
 import { resolveVariables } from "./resolveVariables";
 import { buildTestId, splitCaseLabel, TestIdInput } from "./testId";
@@ -112,6 +113,9 @@ function handleEvent(
       const testItem = testMap.get(testId);
       if (testItem) {
         testRun.started(testItem);
+        // Clear last run's assertion markers so stale icons don't linger while
+        // this test re-runs.
+        assertionGutter().clearTest(testItem);
       }
     }
   } else if (event.event === "test_complete") {
@@ -124,6 +128,7 @@ function handleEvent(
     }
     if (testItem) {
       reportResult(testRun, testItem, result, workspaceRoot);
+      assertionGutter().record(testItem, result, workspaceRoot);
     }
   } else if (event.event === "discovery_warning") {
     log("discovery warning:", event.warning.file_path, event.warning.kind, event.warning.message);
