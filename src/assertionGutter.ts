@@ -125,11 +125,11 @@ export class AssertionGutter implements vscode.Disposable {
   constructor() {
     this.passType = vscode.window.createTextEditorDecorationType({
       gutterIconPath: gutterIcon(PASS_SVG),
-      gutterIconSize: "contain",
+      gutterIconSize: "auto",
     });
     this.failType = vscode.window.createTextEditorDecorationType({
       gutterIconPath: gutterIcon(FAIL_SVG),
-      gutterIconSize: "contain",
+      gutterIconSize: "auto",
     });
     this.disposables.push(
       this.passType,
