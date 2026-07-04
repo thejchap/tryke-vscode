@@ -1,10 +1,12 @@
 # Tryke for VS Code
 
+VS Code integration for [Tryke](https://github.com/thejchap/tryke) — a fast Rust-powered test runner for Python.
+
 <img alt="Screenshot 2026-07-04 at 15 54 25" src="https://github.com/user-attachments/assets/d5190728-4864-453c-8031-d6e7029150cd" />
 
 
 
-VS Code integration for [Tryke](https://github.com/thejchap/tryke) — a fast Rust-powered test runner for Python.
+
 
 Tests show up in the native VS Code Test Explorer. Run, debug, and watch tests with inline pass/fail gutter decorations and per-assertion diagnostics routed through Tryke's JSON event stream.
 
