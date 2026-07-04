@@ -118,6 +118,12 @@ export async function ensureServer(
     cwd: workspaceRoot,
     env: { ...process.env, TRYKE_LOG: trykeLog },
   });
+  // Don't let the child's piped stdio keep the extension host's event loop
+  // alive during shutdown: `deactivate()` calls `stopServer()` but can't
+  // await the exit, so if the server doesn't die immediately its handles
+  // could block the host from settling. `unref()` detaches the child handle
+  // while leaving stdin/stdout/stderr fully usable during normal operation.
+  proc.unref();
 
   pipeToServerChannel(proc.stderr);
 
