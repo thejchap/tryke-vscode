@@ -211,11 +211,18 @@ export class AssertionGutter implements vscode.Disposable {
 
   private applyToEditor(editor: vscode.TextEditor): void {
     const uriKey = editor.document.uri.toString();
+    const lineCount = editor.document.lineCount;
     const passRanges: vscode.Range[] = [];
     const failRanges: vscode.Range[] = [];
     for (const marks of this.byTest.values()) {
       for (const m of marks) {
         if (m.uriKey !== uriKey) {
+          continue;
+        }
+        // The document can have shrunk since the run (the user edited the
+        // file, or tryke reported a stale line). Skip markers past the end
+        // rather than decorate an out-of-bounds line.
+        if (m.line >= lineCount) {
           continue;
         }
         const range = new vscode.Range(m.line, 0, m.line, 0);
