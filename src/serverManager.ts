@@ -40,6 +40,14 @@ function transition(next: ServerState): void {
   state = next;
 }
 
+// Read the module state as its full union type. Written as a function so TS
+// uses the declared return type rather than narrowing to whatever variant an
+// earlier control-flow check proved — across an `await`, `transition()` can
+// have moved us to a different variant under us.
+function currentState(): ServerState {
+  return state;
+}
+
 // Test-only accessors. Production callers should go through `hasActiveServer`.
 export function _getStateForTesting(): ServerState {
   return state;
@@ -98,7 +106,7 @@ export async function ensureServer(
     const stoppingProc = state.proc;
     log("server: ensureServer waiting for in-flight stop to finish");
     await waitForExit(stoppingProc);
-    const afterStop = _getStateForTesting();
+    const afterStop = currentState();
     if (
       afterStop.kind === "stopping" &&
       afterStop.proc === stoppingProc &&
@@ -184,23 +192,33 @@ export async function ensureServer(
   try {
     await ready;
   } catch (err) {
+    // Readiness failed (ping timeout, or the child crashed during startup).
+    // If we still own this proc, tear it down through the normal stop path:
+    // stopServer() disconnects the client (rejecting the in-flight ping),
+    // moves us to `stopping` so a concurrent ensureServer waits for this child
+    // instead of spawning a second one, and runs the bounded
+    // EOF→SIGTERM→SIGKILL escalation via waitForExit. If the exit handler
+    // already fired (crash), it disconnected the client and set us idle —
+    // nothing left to tear down.
     if (currentProc() === proc) {
-      transition({ kind: "idle" });
+      stopServer();
     }
-    proc.kill("SIGTERM");
     throw err;
   }
 
-  // The exit handler may have already moved us back to idle if the server
-  // crashed during the readiness wait. Only promote to running if we still
-  // own this proc. Read through `_getStateForTesting()` so TS doesn't
-  // narrow `state` based on the pre-await snapshot — handlers that fired
-  // during the await can have transitioned us elsewhere.
-  const after = _getStateForTesting();
+  // Handlers (exit/error) or a concurrent stop can have transitioned us during
+  // the await. Re-read the module state through an explicit `ServerState`
+  // annotation so TS doesn't narrow it to the pre-await snapshot.
+  const after = currentState();
   if (after.kind === "starting" && after.proc === proc) {
     transition({ kind: "running", proc, client });
+    return client;
   }
-  return client;
+  // We no longer own this proc — the child crashed during readiness, or a
+  // concurrent stop/restart superseded this start. The client may already be
+  // disconnected, so don't hand back a dead session; fail so the caller
+  // doesn't adopt it.
+  throw new Error("tryke server was superseded before it became ready");
 }
 
 /**
