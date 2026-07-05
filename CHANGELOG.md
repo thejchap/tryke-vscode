@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## [0.0.10] - 2026-07-04
+
 - Add per-assertion gutter status. VS Code paints one test-status icon per
   test function; tryke reports each `expect(...)` individually and keeps
   running past a failure, so a failing test can mix passed and failed
