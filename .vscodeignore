@@ -23,5 +23,7 @@ tsconfig.json
 **/*.tsbuildinfo
 **/.DS_Store
 vsc-extension-quickstart.md
+CONTRIBUTING.md
+scripts/**
 *.vsix
 package-lock.json
