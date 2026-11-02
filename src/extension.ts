@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("tryke.restartServer", async () => {
       const config = getConfig();
       const workspaceRoot = getWorkspaceRoot();
-      if (!workspaceRoot) {
+      if (workspaceRoot === undefined || workspaceRoot === "") {
         vscode.window.showErrorMessage("Tryke: open a workspace folder first.");
         return;
       }
@@ -43,7 +43,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("tryke.startServer", async () => {
       const config = getConfig();
       const workspaceRoot = getWorkspaceRoot();
-      if (!workspaceRoot) {
+      if (workspaceRoot === undefined || workspaceRoot === "") {
         vscode.window.showErrorMessage("Tryke: open a workspace folder first.");
         return;
       }

@@ -149,11 +149,11 @@ export function buildArgs(
 ): string[] {
   const args = ["test", "--reporter", "json"];
 
-  if (config.python) {
+  if (config.python !== null && config.python !== "") {
     args.push("--python", resolveVariables(config.python, workspaceRoot));
   }
 
-  if (config.workers != null) {
+  if (config.workers !== null) {
     args.push("-j", String(config.workers));
   }
 
@@ -161,15 +161,15 @@ export function buildArgs(
     args.push("--fail-fast");
   }
 
-  if (config.maxfail != null) {
+  if (config.maxfail !== null) {
     args.push("--maxfail", String(config.maxfail));
   }
 
-  if (config.dist != null) {
+  if (config.dist !== null) {
     args.push("--dist", config.dist);
   }
 
-  if (config.markers != null) {
+  if (config.markers !== null) {
     args.push("-m", config.markers);
   }
 
@@ -179,11 +179,11 @@ export function buildArgs(
     args.push("--changed-first");
   }
 
-  if (config.baseBranch != null) {
+  if (config.baseBranch !== null) {
     args.push("--base-branch", config.baseBranch);
   }
 
-  if (request.include?.length) {
+  if (request.include !== undefined && request.include.length > 0) {
     const paths = new Set<string>();
     const names: string[] = [];
 
@@ -195,7 +195,7 @@ export function buildArgs(
       } else if (item.children.size > 0) {
         // Group/namespace item: collect leaf test names
         const [filePart] = item.id.split("::");
-        if (filePart) {
+        if (filePart !== undefined && filePart !== "") {
           paths.add(filePart);
           collectLeafNames(item, names);
         }
@@ -210,7 +210,13 @@ export function buildArgs(
         const parts = item.id.split("::");
         const filePart = parts[0];
         const leafPart = parts[parts.length - 1];
-        if (parts.length >= 2 && filePart && leafPart) {
+        if (
+          parts.length >= 2 &&
+          filePart !== undefined &&
+          filePart !== "" &&
+          leafPart !== undefined &&
+          leafPart !== ""
+        ) {
           paths.add(filePart);
           const { name } = splitCaseLabel(leafPart);
           names.push(name);
@@ -239,7 +245,7 @@ export function collectLeafNames(item: vscode.TestItem, names: string[]): void {
   if (item.children.size === 0) {
     const parts = item.id.split("::");
     const last = parts[parts.length - 1];
-    if (last) {
+    if (last !== undefined && last !== "") {
       names.push(last);
     }
   } else {

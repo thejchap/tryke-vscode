@@ -153,8 +153,9 @@ export async function ensureServer(
   proc.unref();
   // Piped child stdio are Sockets with .unref() at runtime, but the
   // Writable/Readable stream types don't declare it — narrow structurally.
-  const unrefStream = (s: unknown): void =>
-    void (s as { unref?: () => void } | null | undefined)?.unref?.();
+  const unrefStream = (s: unknown): void => {
+    (s as { unref?: () => void } | null | undefined)?.unref?.();
+  };
   unrefStream(proc.stdin);
   unrefStream(proc.stdout);
   unrefStream(proc.stderr);

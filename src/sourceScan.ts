@@ -22,7 +22,7 @@ export function readLines(filePath: string): string[] {
 }
 
 export function clearSourceCache(filePath?: string): void {
-  if (filePath) {
+  if (filePath !== undefined && filePath !== "") {
     sourceCache.delete(filePath);
   } else {
     sourceCache.clear();

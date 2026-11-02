@@ -24,7 +24,7 @@ export interface LabelInput {
 // labelled @test.cases function onto the same row.
 export function buildTestLabel(test: LabelInput): string {
   const baseName = test.display_name ?? test.name;
-  return test.case_label ? `${baseName}[${test.case_label}]` : baseName;
+  return (test.case_label ?? "") !== "" ? `${baseName}[${test.case_label}]` : baseName;
 }
 
 export interface DiscoveryResult {
@@ -106,11 +106,12 @@ export async function discoverTests(
       // collapsing all per-case gutter signs onto one row. Scan the
       // source for the exact `t.test.case("label", ...)` declaration so
       // each case gets a per-line range.
-      let line = test.line_number;
-      if (line != null && test.case_label) {
-        line = findCaseLine(absPath, test.case_label, line);
+      let line = test.line_number ?? null;
+      const caseLabel = test.case_label ?? "";
+      if (line !== null && caseLabel !== "") {
+        line = findCaseLine(absPath, caseLabel, line);
       }
-      if (line != null) {
+      if (line !== null) {
         testItem.range = new vscode.Range(
           new vscode.Position(line - 1, 0),
           new vscode.Position(line - 1, 0),
@@ -151,9 +152,9 @@ function getOrCreateGroup(
     // test's line as the search anchor — multiple describes in one file
     // get disambiguated by proximity.
     const groupItem = controller.createTestItem(idPrefix, groupName, fileUri);
-    if (test.line_number != null) {
+    if (test.line_number !== undefined && test.line_number !== null) {
       const describeLine = findDescribeLine(absPath, groupName, test.line_number);
-      if (describeLine != null) {
+      if (describeLine !== undefined) {
         groupItem.range = new vscode.Range(
           new vscode.Position(describeLine - 1, 0),
           new vscode.Position(describeLine - 1, 0),
@@ -184,7 +185,7 @@ function collectTests(
 ): Promise<CollectResult> {
   return new Promise((resolve, reject) => {
     const args = ["test", "--collect-only", "--reporter", "json"];
-    if (config.python) {
+    if (config.python !== null && config.python !== "") {
       // Discovery shells out to `tryke test --collect-only`, which spawns
       // a worker — so it needs the same interpreter as a test run, otherwise
       // collection silently fails when the system python lacks the tryke
