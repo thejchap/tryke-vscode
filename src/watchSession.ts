@@ -190,12 +190,12 @@ export class WatchSession implements vscode.Disposable {
     const items: vscode.TestItem[] = [];
     const originalInclude = this.request.include;
 
-    if (originalInclude?.length) {
+    if (originalInclude !== undefined && originalInclude.length > 0) {
       // Scoped watch: only re-run tests in changed files that are within the original scope
       const includeIds = new Set(originalInclude.map((i) => i.id));
       for (const [id, item] of this.getTestMap()) {
         const [filePart] = id.split("::");
-        if (filePart && changedFiles.has(filePart) && isInScope(id, includeIds)) {
+        if (filePart !== undefined && filePart !== "" && changedFiles.has(filePart) && isInScope(id, includeIds)) {
           // Only add file-level or leaf items to avoid duplicates
           if (!id.includes("::") || item.children.size === 0) {
             items.push(item);

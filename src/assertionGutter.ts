@@ -63,8 +63,9 @@ export function computeAssertionMarks(result: TrykeTestResult): AssertionMark[] 
     // re-mark an expected assertion that already failed as "passed".
     const failedOwnFileLines = new Set<number>();
     for (const a of detail.assertions ?? []) {
-      put(a.file ?? null, a.line, "failed");
-      if (a.file == null) {
+      const file = a.file ?? null;
+      put(file, a.line, "failed");
+      if (file === null) {
         failedOwnFileLines.add(a.line);
       }
     }
@@ -73,7 +74,7 @@ export function computeAssertionMarks(result: TrykeTestResult): AssertionMark[] 
     // failed test may have bailed (a raised exception, fail-fast) before
     // reaching later expects — those get no marker rather than a false pass.
     const executed =
-      detail.executed_lines != null ? new Set(detail.executed_lines) : undefined;
+      detail.executed_lines ? new Set(detail.executed_lines) : undefined;
 
     for (const a of result.test.expected_assertions ?? []) {
       if (failedOwnFileLines.has(a.line)) {
@@ -238,7 +239,7 @@ export class AssertionGutter implements vscode.Disposable {
     testItem: vscode.TestItem,
     workspaceRoot: string,
   ): vscode.Uri | undefined {
-    if (file != null && file !== "") {
+    if (file !== null && file !== "") {
       const abs = path.isAbsolute(file) ? file : path.join(workspaceRoot, file);
       return vscode.Uri.file(abs);
     }

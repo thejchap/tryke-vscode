@@ -85,16 +85,18 @@ export function reportResult(
 
   // Per-test stdout/stderr is routed to the test-scoped stream so VS Code
   // can show it under that specific test's view.
-  if (result.stdout != null && result.stdout !== "") {
+  const stdout = result.stdout ?? "";
+  if (stdout !== "") {
     testRun.appendOutput(
-      result.stdout.replace(/\n/g, "\r\n"),
+      stdout.replace(/\n/g, "\r\n"),
       undefined,
       testItem,
     );
   }
-  if (result.stderr != null && result.stderr !== "") {
+  const stderr = result.stderr ?? "";
+  if (stderr !== "") {
     testRun.appendOutput(
-      result.stderr.replace(/\n/g, "\r\n"),
+      stderr.replace(/\n/g, "\r\n"),
       undefined,
       testItem,
     );
@@ -108,8 +110,9 @@ export function buildFailureMessages(
 ): vscode.TestMessage[] {
   const messages: vscode.TestMessage[] = [];
 
-  if (detail.assertions?.length) {
-    for (const assertion of detail.assertions) {
+  const assertions = detail.assertions ?? [];
+  if (assertions.length > 0) {
+    for (const assertion of assertions) {
       const msg = vscode.TestMessage.diff(
         assertion.expression,
         assertion.expected,
@@ -239,7 +242,7 @@ export function resolveAssertionUri(
   testItem: vscode.TestItem,
   workspaceRoot: string,
 ): vscode.Uri | undefined {
-  if (file != null && file !== "") {
+  if (file !== undefined && file !== null && file !== "") {
     const abs = path.isAbsolute(file) ? file : path.join(workspaceRoot, file);
     return vscode.Uri.file(abs);
   }

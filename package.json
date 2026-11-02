@@ -176,7 +176,7 @@
     "watch:bundle": "node esbuild.js --watch",
     "typecheck": "tsc -p ./ --noEmit",
     "pretest": "npm run compile && npm run typecheck && npm run lint",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "test": "vscode-test",
     "package": "npm run bundle:prod && vsce package",
     "publish": "vsce publish"
@@ -185,14 +185,13 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "25.x",
     "@types/vscode": "^1.144.0",
-    "@typescript/native": "npm:typescript@^7.0.2",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.28.0",
-    "eslint": "^10.13.0",
-    "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.60.1"
+    "oxlint": "^1.90.0",
+    "oxlint-tsgolint": "^7.0.2005",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "zod": "^4.4.3"

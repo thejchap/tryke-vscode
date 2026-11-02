@@ -477,7 +477,7 @@ suite("buildFailureMessages — doctest", () => {
     // Anchored at the *failing example line*, not the test item's class
     // definition (which is where the test item was originally created).
     assert.strictEqual(msg.location?.uri.fsPath, "/tmp/dt_sample.py");
-    assert.strictEqual(msg.location?.range.start.line, 2); // 1-indexed line 3
+    assert.strictEqual(msg.location.range.start.line, 2); // 1-indexed line 3
     // TestMessage.diff stores expected/got — these are the only fields
     // VS Code's diff view reads off of the message.
     assert.strictEqual(msg.expectedOutput, "1");
@@ -493,7 +493,7 @@ suite("buildFailureMessages — doctest", () => {
     assert.strictEqual(messages.length, 1);
     const msg = messages[0]!;
     assert.strictEqual(msg.location?.uri.fsPath, "/tmp/dt_sample.py");
-    assert.strictEqual(msg.location?.range.start.line, 5);
+    assert.strictEqual(msg.location.range.start.line, 5);
     // Body should be the failing example + the bottom-line exception only.
     // Python's internal `doctest.py` frame and the `<doctest fn[1]>`
     // synthetic frame must NOT leak through.

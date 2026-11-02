@@ -164,7 +164,7 @@ export async function dispatchRun(
     // `undefined` (truly absent) — both mean "untagged broadcast", which
     // older servers and notifications without an originating run still
     // emit. Either way: accept rather than drop on a per-run filter.
-    if (run_id != null && run_id !== runId) {
+    if (run_id !== undefined && run_id !== null && run_id !== runId) {
       return;
     }
     runCompleteSeen = true;
@@ -230,11 +230,11 @@ export function buildRunParams(
 ): RunParams {
   const params: RunParams = { run_id: runId };
 
-  if (config.markers != null) {
+  if (config.markers !== null) {
     params.markers = config.markers;
   }
 
-  if (!request.include?.length) {
+  if (request.include === undefined || request.include.length === 0) {
     return params;
   }
 

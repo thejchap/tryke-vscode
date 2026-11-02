@@ -165,9 +165,7 @@ suite("server notification param schemas", () => {
   test("RunCompleteParams accepts run_id when present", () => {
     const ok = RunCompleteParamsSchema.safeParse({ run_id: "run-1" });
     assert.strictEqual(ok.success, true);
-    if (ok.success) {
-      assert.strictEqual(ok.data.run_id, "run-1");
-    }
+    assert.strictEqual(ok.data.run_id, "run-1");
   });
 });
 

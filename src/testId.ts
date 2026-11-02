@@ -18,7 +18,7 @@ export interface TestIdInput {
 export function buildTestId(test: TestIdInput, workspaceRoot: string): string {
   const filePath = test.file_path ?? test.module_path;
   const relPath = path.relative(workspaceRoot, path.resolve(workspaceRoot, filePath));
-  const leaf = test.case_label ? `${test.name}[${test.case_label}]` : test.name;
+  const leaf = (test.case_label ?? "") !== "" ? `${test.name}[${test.case_label}]` : test.name;
   return [relPath, ...(test.groups ?? []), leaf].join("::");
 }
 

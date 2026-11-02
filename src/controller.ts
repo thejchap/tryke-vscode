@@ -83,7 +83,7 @@ export class TrykeTestController implements vscode.Disposable {
 
   private async discover(): Promise<void> {
     const workspaceRoot = this.getWorkspaceRoot();
-    if (!workspaceRoot) {
+    if (workspaceRoot === undefined || workspaceRoot === "") {
       return;
     }
 
@@ -113,13 +113,13 @@ export class TrykeTestController implements vscode.Disposable {
     token: vscode.CancellationToken,
   ): Promise<void> {
     const workspaceRoot = this.getWorkspaceRoot();
-    if (!workspaceRoot) {
+    if (workspaceRoot === undefined || workspaceRoot === "") {
       return;
     }
 
     const config = getConfig();
 
-    if (request.continuous) {
+    if (request.continuous === true) {
       const session = new WatchSession(
         this.controller,
         request,
@@ -163,7 +163,7 @@ export class TrykeTestController implements vscode.Disposable {
     token: vscode.CancellationToken,
   ): Promise<void> {
     const workspaceRoot = this.getWorkspaceRoot();
-    if (!workspaceRoot) {
+    if (workspaceRoot === undefined || workspaceRoot === "") {
       return;
     }
 

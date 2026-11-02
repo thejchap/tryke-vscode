@@ -13,11 +13,9 @@ esbuild.js
 .pre-commit-config.yaml
 .gitignore
 .yarnrc
-.eslintrc*
-eslint.config.*
+.oxlintrc.json
 tsconfig.json
 **/tsconfig.json
-**/eslint.config.mjs
 **/*.map
 **/*.ts
 **/*.tsbuildinfo
